@@ -1,0 +1,142 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Game {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String    @default("")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  
+  decks       Deck[]
+  stats       Stat[]
+  worldStates WorldState[]
+  logicConfig GameLogicConfig?
+  
+  @@map("games")
+}
+
+model Deck {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId      String    @map("game_id") @db.Uuid
+  name        String
+  type        String
+  weight      Int       @default(1)
+  description String    @default("")
+  
+  game        Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  cards       Card[]
+  
+  @@index([gameId], map: "idx_decks_game")
+  @@map("decks")
+}
+
+model Card {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  deckId      String      @map("deck_id") @db.Uuid
+  title       String
+  type        String      @default("narrative")
+  description String      @default("")
+  priority    Int         @default(0)
+  tags        String[]    @default([])
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  
+  deck        Deck        @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  conditions  Condition[]
+  options     Option[]
+  nextCardRefs Option[]    @relation("NextCard")
+  
+  @@index([deckId], map: "idx_cards_deck")
+  @@map("cards")
+}
+
+model Condition {
+  id      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId  String  @map("card_id") @db.Uuid
+  type    String
+  key     String
+  value   String
+  
+  card    Card    @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  
+  @@index([cardId], map: "idx_conditions_card")
+  @@map("conditions")
+}
+
+model Option {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId    String    @map("card_id") @db.Uuid
+  text      String
+  order     Int       @default(1)
+  nextCardId String?   @map("next_card_id") @db.Uuid
+  
+  card      Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  nextCard  Card?     @relation("NextCard", fields: [nextCardId], references: [id], onDelete: SetNull)
+  effects   Effect[]
+  
+  @@index([cardId], map: "idx_options_card")
+  @@map("options")
+}
+
+model Effect {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  optionId  String  @map("option_id") @db.Uuid
+  type      String
+  key       String
+  value     String
+  
+  option    Option  @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  
+  @@index([optionId], map: "idx_effects_option")
+  @@map("effects")
+}
+
+model Stat {
+  id      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId  String  @map("game_id") @db.Uuid
+  key     String
+  value   Int     @default(0)
+  min     Int     @default(0)
+  max     Int     @default(100)
+  
+  game    Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  
+  @@unique([gameId, key])
+  @@index([gameId], map: "idx_global_stats_game")
+  @@map("global_stats")
+}
+
+model WorldState {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId    String  @map("game_id") @db.Uuid
+  key       String
+  valueType String  @map("value_type")
+  value     String
+
+  game      Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, key])
+  @@index([gameId], map: "idx_world_states_game")
+  @@map("world_states")
+}
+
+model GameLogicConfig {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId   String  @unique @map("game_id") @db.Uuid
+  counters Json
+  rules    Json
+
+  game     Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@map("game_logic_configs")
+}

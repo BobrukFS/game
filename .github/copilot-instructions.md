@@ -1,0 +1,4 @@
+- Keep domain rules in `src/lib/domain` pure and framework-agnostic.
+- Keep database access in `src/lib/services` and Supabase client wrappers in `src/lib/supabase`.
+- Prefer server actions in `src/app/actions.ts` for writes and keep UI components lean.
+- Maintain strong typing in `src/types` and avoid untyped `any`.
