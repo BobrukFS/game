@@ -611,8 +611,8 @@ export async function deleteWorldState(id: string, gameId: string) {
 export async function fetchGameLogicConfig(gameId: string) {
   const config = await prismaService.gameLogic.getGameLogicByGameId(gameId)
   return {
-    counters: (config?.counters as InteractionCounterConfig[]) || [],
-    rules: (config?.rules as InteractionRule[]) || [],
+    counters: (config?.counters as unknown as InteractionCounterConfig[]) || [],
+    rules: (config?.rules as unknown as InteractionRule[]) || [],
   }
 }
 
