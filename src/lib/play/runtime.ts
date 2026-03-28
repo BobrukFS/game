@@ -553,7 +553,7 @@ export function buildInitialGameState(bundle: PlayRuntimeBundle): GameState {
   )
 
   const counters: Record<string, number> = {}
-  ;(bundle.logic.counters || []).forEach((counter) => {
+  ;(bundle.logic.counters || []).forEach((counter: any) => {
     counters[counter.key] = 0
   })
 
@@ -566,6 +566,7 @@ export function buildInitialGameState(bundle: PlayRuntimeBundle): GameState {
     inventory: [],
     flags: {},
     world,
+    completedDecks: [],
     interactions: {
       total: counters["interactions.total"] || 0,
       counters,
@@ -642,7 +643,14 @@ export function drawNextCard(bundle: PlayRuntimeBundle, state: GameState): DrawR
     .map((entry) => bundle.cards.find((card) => card.id === entry.cardId))
     .filter((card): card is PlayRuntimeCard => !!card)
 
-  const scoredCards = sortByEffectiveWeightThenPriority(validCards, decksById, state, logicConfig)
+  // Filter out cards from completed non-repeatable decks
+  const cardsFromRepeatableDecks = validCards.filter((card) => {
+    const deck = decksById.get(card.deckId)
+    if (!deck || deck.repeatable) return true
+    return !state.completedDecks.includes(card.deckId)
+  })
+
+  const scoredCards = sortByEffectiveWeightThenPriority(cardsFromRepeatableDecks, decksById, state, logicConfig)
 
   const constrainedCards = scoredCards.filter((card) =>
     isCardAllowedByConstraints(card, bundle, state, logicConfig)
@@ -790,10 +798,16 @@ export function applySelectedOption(
     return { state: nextState }
   }
 
+  // Mark the deck as completed
+  const completedDecksUpdated = state.completedDecks.includes(card.deckId)
+    ? state.completedDecks
+    : [...state.completedDecks, card.deckId]
+
   nextState = applyGameLogicEvent(
     {
       ...nextState,
       activeSequence: undefined,
+      completedDecks: completedDecksUpdated,
     },
     logicConfig,
     {

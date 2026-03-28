@@ -44,6 +44,7 @@ export async function createDeck(data: {
   type: string;
   weight: number;
   description?: string;
+  repeatable?: boolean;
 }) {
   return prisma.deck.create({
     data: {
@@ -52,13 +53,14 @@ export async function createDeck(data: {
       type: data.type,
       weight: data.weight,
       description: data.description || "",
+      repeatable: data.repeatable ?? true,
     },
   });
 }
 
 export async function updateDeck(
   id: string,
-  data: Partial<{ name: string; type: string; weight: number; description: string }>
+  data: Partial<{ name: string; type: string; weight: number; description: string; repeatable: boolean }>
 ) {
   return prisma.deck.update({
     where: { id },

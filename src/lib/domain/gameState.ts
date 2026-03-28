@@ -23,6 +23,7 @@ export interface GameState {
   interactions?: GameInteractionState
   turn?: number
   world: WorldStateMap
+  completedDecks: string[]
   history: {
     cardId: string
     optionId: string

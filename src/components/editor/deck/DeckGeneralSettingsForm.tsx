@@ -14,6 +14,7 @@ export default function DeckGeneralSettingsForm({
     type: deck.type,
     weight: deck.weight,
     description: deck.description || "",
+    repeatable: deck.repeatable ?? true,
   })
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -23,9 +24,10 @@ export default function DeckGeneralSettingsForm({
       formData.name.trim() !== deck.name ||
       formData.type.trim() !== deck.type ||
       formData.weight !== deck.weight ||
-      formData.description.trim() !== (deck.description || "")
+      formData.description.trim() !== (deck.description || "") ||
+      formData.repeatable !== (deck.repeatable ?? true)
     )
-  }, [deck.description, deck.name, deck.type, deck.weight, formData])
+  }, [deck.description, deck.name, deck.type, deck.weight, deck.repeatable, formData])
 
   function toggleEdit() {
     if (isEditing) {
@@ -34,6 +36,7 @@ export default function DeckGeneralSettingsForm({
         type: deck.type,
         weight: deck.weight,
         description: deck.description || "",
+        repeatable: deck.repeatable ?? true,
       })
     }
 
@@ -59,6 +62,7 @@ export default function DeckGeneralSettingsForm({
         type,
         weight: formData.weight,
         description,
+        repeatable: formData.repeatable,
       })
       setIsEditing(false)
     } catch (error) {
@@ -138,6 +142,20 @@ export default function DeckGeneralSettingsForm({
             onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
             className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-70"
           />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <input
+            id="deck-settings-repeatable"
+            type="checkbox"
+            checked={formData.repeatable}
+            disabled={!isEditing}
+            onChange={(e) => setFormData((prev) => ({ ...prev, repeatable: e.target.checked }))}
+            className="h-4 w-4 cursor-pointer rounded border-slate-600 bg-slate-900 text-emerald-600 disabled:cursor-not-allowed disabled:opacity-70"
+          />
+          <label htmlFor="deck-settings-repeatable" className="text-sm text-slate-200 cursor-pointer">
+            Este deck puede repetirse despues de completarse
+          </label>
         </div>
 
         <button

@@ -14,7 +14,9 @@ export async function getAllDecks(supabase: SupabaseClient): Promise<DeckWithGam
     gameId: d.game_id,
     name: d.name,
     type: d.type,
-    description: d.description
+    weight: d.weight,
+    description: d.description,
+    repeatable: d.repeatable ?? true,
   }))
 }
 
@@ -34,7 +36,9 @@ export async function getDecksByGameId(
     gameId: d.game_id,
     name: d.name,
     type: d.type,
-    description: d.description
+    weight: d.weight,
+    description: d.description,
+    repeatable: d.repeatable ?? true,
   }))
 }
 
@@ -56,7 +60,9 @@ export async function getDeckById(
     gameId: data.game_id,
     name: data.name,
     type: data.type,
-    description: data.description
+    weight: data.weight,
+    description: data.description,
+    repeatable: data.repeatable ?? true,
   }
 }
 
@@ -71,7 +77,9 @@ export async function createDeck(
         game_id: deck.gameId,
         name: deck.name,
         type: deck.type,
-        description: deck.description
+        weight: deck.weight,
+        description: deck.description,
+        repeatable: deck.repeatable ?? true,
       }
     ])
     .select()
@@ -83,7 +91,9 @@ export async function createDeck(
     gameId: data.game_id,
     name: data.name,
     type: data.type,
-    description: data.description
+    weight: data.weight,
+    description: data.description,
+    repeatable: data.repeatable ?? true,
   }
 }
 
@@ -95,7 +105,9 @@ export async function updateDeck(
   const payload: any = {}
   if (updates.name) payload.name = updates.name
   if (updates.type) payload.type = updates.type
+  if (updates.weight !== undefined) payload.weight = updates.weight
   if (updates.description) payload.description = updates.description
+  if (updates.repeatable !== undefined) payload.repeatable = updates.repeatable
 
   const { data, error } = await supabase
     .from("decks")
@@ -110,7 +122,9 @@ export async function updateDeck(
     gameId: data.game_id,
     name: data.name,
     type: data.type,
-    description: data.description
+    weight: data.weight,
+    description: data.description,
+    repeatable: data.repeatable ?? true,
   }
 }
 

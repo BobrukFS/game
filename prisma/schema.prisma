@@ -33,6 +33,7 @@ model Deck {
   type        String
   weight      Int       @default(1)
   description String    @default("")
+  repeatable  Boolean   @default(true) @map("repeatable")
   
   game        Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
   cards       Card[]

@@ -9,6 +9,7 @@ export type DeckModel = {
   type: string
   weight: number
   description: string
+  repeatable?: boolean
 }
 
 export type DeckCard = CardWithRelations

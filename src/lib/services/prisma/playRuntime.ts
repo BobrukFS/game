@@ -11,6 +11,7 @@ export interface PlayRuntimeDeck {
   name: string
   type: string
   weight: number
+  repeatable: boolean
 }
 
 export interface PlayRuntimeEffect {
@@ -95,6 +96,7 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
         name: true,
         type: true,
         weight: true,
+        repeatable: true,
         cards: {
           select: {
             id: true,
@@ -132,7 +134,7 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
           },
           orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
         },
-      },
+      } as any,
       orderBy: { name: "asc" },
     }),
     prisma.stat.findMany({
@@ -160,8 +162,8 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
     return null
   }
 
-  const cards: PlayRuntimeCard[] = decks.flatMap((deck) =>
-    deck.cards.map((card) => ({
+  const cards: PlayRuntimeCard[] = (decks as any[]).flatMap((deck) =>
+    (deck.cards || []).map((card: any) => ({
       id: card.id,
       deckId: card.deckId,
       title: card.title,
@@ -176,11 +178,12 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
 
   return {
     game,
-    decks: decks.map((deck) => ({
+    decks: (decks as any[]).map((deck) => ({
       id: deck.id,
       name: deck.name,
       type: deck.type,
       weight: deck.weight,
+      repeatable: deck.repeatable,
     })),
     cards,
     stats,

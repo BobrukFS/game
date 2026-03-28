@@ -5,4 +5,6 @@ export interface Deck {
   type: string;
   weight: number;
   description: string;
+  repeatable: boolean;
 }
+

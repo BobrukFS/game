@@ -127,7 +127,9 @@ export default function RuntimeSession({ bundle, mode }: RuntimeSessionProps) {
       return
     }
 
-    const nextCardResult = drawNextCard(bundle, state)
+    // Clear activeSequence so it can draw from the general pool
+    const clearedState = { ...state, activeSequence: undefined }
+    const nextCardResult = drawNextCard(bundle, clearedState)
     setTimeline((prev) => [...prev, { state, currentCardId }])
     setState(nextCardResult.state)
     setCurrentCardId(nextCardResult.card?.id || null)

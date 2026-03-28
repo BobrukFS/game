@@ -40,6 +40,7 @@ export default async function DeckSettingsPage({
             type: deck.type,
             weight: deck.weight,
             description: deck.description || "",
+            repeatable: deck.repeatable ?? true,
           }}
         />
 

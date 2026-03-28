@@ -1,4 +1,4 @@
-import { Card, CyclePhase } from "@/lib/domain"
+import { Card, CyclePhase, Deck } from "@/lib/domain"
 import { GameState } from "@/lib/domain"
 import { canShowCard } from "@/lib/engine/conditionEngine"
 
@@ -42,10 +42,19 @@ function orderCards(cards: Card[]): Card[] {
   return [...fixed, ...random]
 }
 
-export function buildCyclePool(cards: Card[], state: GameState): Card[] {
+export function buildCyclePool(cards: Card[], state: GameState, decks?: Deck[]): Card[] {
   const phase = state.world.phase
+  const deckMap = new Map(decks?.map((d) => [d.id, d]) || [])
+  const completedNonRepeatableDecks = new Set(
+    state.completedDecks.filter((deckId) => {
+      const deck = deckMap.get(deckId)
+      return deck && !deck.repeatable
+    })
+  )
+
   const validCards = getCardsForPhase(getValidCards(cards, state), phase)
     .filter(card => card.consumesInteraction !== false)
+    .filter(card => !completedNonRepeatableDecks.has(card.deckId))
 
   const mainCandidates = validCards.filter(card => card.eventType === "main")
   const secondaryCandidates = validCards.filter(card => card.eventType === "secondary")
@@ -72,7 +81,7 @@ export function buildCyclePool(cards: Card[], state: GameState): Card[] {
   return orderCards([...pool, ...randomPool])
 }
 
-export function drawFromCyclePool(cards: Card[], state: GameState): Card | null {
-  const pool = buildCyclePool(cards, state)
+export function drawFromCyclePool(cards: Card[], state: GameState, decks?: Deck[]): Card | null {
+  const pool = buildCyclePool(cards, state, decks)
   return pool[0] ?? null
 }

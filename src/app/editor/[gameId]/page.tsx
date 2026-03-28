@@ -13,12 +13,14 @@ type DeckListItem = {
   type: string
   weight: number
   description: string
+  repeatable?: boolean
   _count?: {
     cards: number
   }
 }
 
 type SortMode = "name-asc" | "name-desc" | "weight-desc" | "weight-asc" | "cards-desc"
+type RepeatableFilter = "all" | "repeatable" | "non-repeatable"
 
 export default function GamePage() {
   const params = useParams()
@@ -27,6 +29,7 @@ export default function GamePage() {
   const [decks, setDecks] = useState<DeckListItem[]>([])
   const [deckTypes, setDeckTypes] = useState<string[]>([])
   const [selectedType, setSelectedType] = useState<string>("all")
+  const [selectedRepeatableFilter, setSelectedRepeatableFilter] = useState<RepeatableFilter>("all")
   const [sortMode, setSortMode] = useState<SortMode>("name-asc")
   const [isLoading, setIsLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
@@ -57,10 +60,17 @@ export default function GamePage() {
   }
 
   const filteredAndSortedDecks = useMemo(() => {
-    const filtered =
+    let filtered =
       selectedType === "all"
         ? decks
         : decks.filter((deck) => deck.type.trim().toLowerCase() === selectedType.trim().toLowerCase())
+
+    // Apply repeatable filter
+    if (selectedRepeatableFilter === "repeatable") {
+      filtered = filtered.filter((deck) => deck.repeatable !== false)
+    } else if (selectedRepeatableFilter === "non-repeatable") {
+      filtered = filtered.filter((deck) => deck.repeatable === false)
+    }
 
     const sorted = [...filtered]
     sorted.sort((a, b) => {
@@ -72,7 +82,7 @@ export default function GamePage() {
     })
 
     return sorted
-  }, [decks, selectedType, sortMode])
+  }, [decks, selectedType, selectedRepeatableFilter, sortMode])
 
   async function handleCreateDeck(e: React.FormEvent) {
     e.preventDefault()
@@ -235,32 +245,74 @@ export default function GamePage() {
       )}
 
       <div className="mb-6 rounded border border-slate-700 bg-slate-800/60 p-4">
-        <div className="mb-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setSelectedType("all")}
-            className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-              selectedType === "all"
-                ? "border-blue-400 bg-blue-500/20 text-blue-200"
-                : "border-slate-600 text-slate-300 hover:bg-slate-700"
-            }`}
-          >
-            Todos
-          </button>
-          {deckTypes.map((type) => (
+        <div className="mb-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Tipo</p>
+          <div className="mb-3 flex flex-wrap gap-2">
             <button
-              key={type}
               type="button"
-              onClick={() => setSelectedType(type)}
+              onClick={() => setSelectedType("all")}
               className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-                selectedType === type
+                selectedType === "all"
+                  ? "border-blue-400 bg-blue-500/20 text-blue-200"
+                  : "border-slate-600 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              Todos
+            </button>
+            {deckTypes.map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setSelectedType(type)}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                  selectedType === type
+                    ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
+                    : "border-slate-600 text-slate-300 hover:bg-slate-700"
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Repetibilidad</p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedRepeatableFilter("all")}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                selectedRepeatableFilter === "all"
+                  ? "border-blue-400 bg-blue-500/20 text-blue-200"
+                  : "border-slate-600 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedRepeatableFilter("repeatable")}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                selectedRepeatableFilter === "repeatable"
                   ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
                   : "border-slate-600 text-slate-300 hover:bg-slate-700"
               }`}
             >
-              {type}
+              Repetibles
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setSelectedRepeatableFilter("non-repeatable")}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                selectedRepeatableFilter === "non-repeatable"
+                  ? "border-amber-400 bg-amber-500/20 text-amber-200"
+                  : "border-slate-600 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              Una sola vez
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
@@ -310,6 +362,28 @@ export default function GamePage() {
                   <path d="M7 13h8" />
                 </svg>
                 {deck._count?.cards || 0} cartas
+              </span>
+              <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold ${
+                deck.repeatable !== false
+                  ? "border border-cyan-400/50 bg-cyan-600/10 text-cyan-200"
+                  : "border border-amber-400/50 bg-amber-600/10 text-amber-200"
+              }`}>
+                {deck.repeatable !== false ? (
+                  <>
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 12a8 8 0 0 1 15.5-1m0 0H19m0 0v3m-18 1A8 8 0 0 0 19.5 5m0 0H5m0 0V2" />
+                    </svg>
+                    Repetible
+                  </>
+                ) : (
+                  <>
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 6v6l4 2" />
+                    </svg>
+                    Una sola vez
+                  </>
+                )}
               </span>
             </div>
 

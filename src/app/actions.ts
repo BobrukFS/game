@@ -217,9 +217,9 @@ export async function createDeck(data: {
 export async function updateDeck(
   id: string,
   gameId: string,
-  updates: { name?: string; type?: string; weight?: number; description?: string }
+  updates: { name?: string; type?: string; weight?: number; description?: string; repeatable?: boolean }
 ) {
-  const normalizedUpdates: { name?: string; type?: string; weight?: number; description?: string } = {}
+  const normalizedUpdates: { name?: string; type?: string; weight?: number; description?: string; repeatable?: boolean } = {}
 
   if (typeof updates.name === "string") {
     normalizedUpdates.name = requireText(updates.name, "Nombre del deck")
@@ -235,6 +235,10 @@ export async function updateDeck(
 
   if (typeof updates.description === "string") {
     normalizedUpdates.description = normalizeOptionalText(updates.description)
+  }
+
+  if (typeof updates.repeatable === "boolean") {
+    normalizedUpdates.repeatable = updates.repeatable
   }
 
   const result = await prismaService.decks.updateDeck(id, normalizedUpdates)
