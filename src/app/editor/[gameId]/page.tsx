@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
-import { fetchDecksByGameId, createDeck, deleteDeck } from "@/app/actions"
+import { fetchDecksByGameId, createDeck } from "@/app/actions"
+
 type DeckListItem = {
   id: string
   gameId: string
@@ -11,7 +12,12 @@ type DeckListItem = {
   type: string
   weight: number
   description: string
+  _count?: {
+    cards: number
+  }
 }
+
+type SortMode = "name-asc" | "name-desc" | "weight-desc" | "weight-asc" | "cards-desc"
 
 export default function GamePage() {
   const params = useParams()
@@ -19,6 +25,8 @@ export default function GamePage() {
 
   const [decks, setDecks] = useState<DeckListItem[]>([])
   const [deckTypes, setDeckTypes] = useState<string[]>([])
+  const [selectedType, setSelectedType] = useState<string>("all")
+  const [sortMode, setSortMode] = useState<SortMode>("name-asc")
   const [isLoading, setIsLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [formData, setFormData] = useState({ name: "", type: "", weight: 1, description: "" })
@@ -47,6 +55,24 @@ export default function GamePage() {
     }
   }
 
+  const filteredAndSortedDecks = useMemo(() => {
+    const filtered =
+      selectedType === "all"
+        ? decks
+        : decks.filter((deck) => deck.type.trim().toLowerCase() === selectedType.trim().toLowerCase())
+
+    const sorted = [...filtered]
+    sorted.sort((a, b) => {
+      if (sortMode === "name-asc") return a.name.localeCompare(b.name)
+      if (sortMode === "name-desc") return b.name.localeCompare(a.name)
+      if (sortMode === "weight-desc") return b.weight - a.weight
+      if (sortMode === "weight-asc") return a.weight - b.weight
+      return (b._count?.cards || 0) - (a._count?.cards || 0)
+    })
+
+    return sorted
+  }, [decks, selectedType, sortMode])
+
   async function handleCreateDeck(e: React.FormEvent) {
     e.preventDefault()
 
@@ -70,16 +96,6 @@ export default function GamePage() {
       setShowForm(false)
     } catch (error) {
       console.error("Error creating deck:", error)
-    }
-  }
-
-  async function handleDeleteDeck(deckId: string) {
-    if (!confirm("¿Eliminar este deck?")) return
-    try {
-      await deleteDeck(deckId, gameId)
-      await loadDecks()
-    } catch (error) {
-      console.error("Error deleting deck:", error)
     }
   }
 
@@ -184,32 +200,91 @@ export default function GamePage() {
         </form>
       )}
 
-      <div className="grid gap-4">
-        {decks.map((deck) => (
-          <div key={deck.id} className="bg-slate-800 p-6 rounded border border-slate-700 hover:border-slate-600">
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <Link href={`/editor/${gameId}/decks/${deck.id}`}>
-                  <h2 className="text-xl font-bold text-blue-400 hover:text-blue-300 cursor-pointer">
-                    {deck.name}
-                  </h2>
-                </Link>
-                <p className="text-slate-400 text-sm mt-1">Tipo: {deck.type}</p>
-                <p className="text-slate-400 text-sm mt-1">Peso: {deck.weight}</p>
-                <p className="text-slate-400 mt-2">{deck.description}</p>
-              </div>
-              <button
-                onClick={() => handleDeleteDeck(deck.id)}
-                className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-white text-sm"
-              >
-                Eliminar
-              </button>
+      <div className="mb-6 rounded border border-slate-700 bg-slate-800/60 p-4">
+        <div className="mb-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedType("all")}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+              selectedType === "all"
+                ? "border-blue-400 bg-blue-500/20 text-blue-200"
+                : "border-slate-600 text-slate-300 hover:bg-slate-700"
+            }`}
+          >
+            Todos
+          </button>
+          {deckTypes.map((type) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => setSelectedType(type)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                selectedType === type
+                  ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
+                  : "border-slate-600 text-slate-300 hover:bg-slate-700"
+              }`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <label htmlFor="deck-sort" className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Ordenar por
+          </label>
+          <select
+            id="deck-sort"
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as SortMode)}
+            className="rounded border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+          >
+            <option value="name-asc">Nombre (A-Z)</option>
+            <option value="name-desc">Nombre (Z-A)</option>
+            <option value="weight-desc">Peso (alto a bajo)</option>
+            <option value="weight-asc">Peso (bajo a alto)</option>
+            <option value="cards-desc">Cantidad de cartas</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {filteredAndSortedDecks.map((deck) => (
+          <Link
+            key={deck.id}
+            href={`/editor/${gameId}/decks/${deck.id}`}
+            className="group rounded-lg border border-slate-700 bg-slate-800 p-5 transition-colors hover:border-slate-500"
+          >
+            <h2 className="text-xl font-bold text-blue-300 group-hover:text-blue-200">{deck.name}</h2>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-emerald-400/50 bg-emerald-600/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-200">
+                {deck.type}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-700 px-2 py-1 text-xs text-slate-200">
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <path d="M6 7h12l-1 10H7L6 7Z" />
+                  <path d="M12 7V4" />
+                  <path d="M9 4h6" />
+                </svg>
+                {deck.weight}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-slate-700 px-2 py-1 text-xs text-slate-200">
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <rect x="3" y="5" width="14" height="14" rx="2" />
+                  <path d="M7 9h10" />
+                  <path d="M7 13h8" />
+                </svg>
+                {deck._count?.cards || 0} cartas
+              </span>
             </div>
-          </div>
+
+            <p className="mt-3 text-sm text-slate-400">{deck.description || "Sin descripcion"}</p>
+          </Link>
         ))}
       </div>
 
-      {decks.length === 0 && (
+      {filteredAndSortedDecks.length === 0 && (
         <p className="text-slate-400 text-center py-12">No hay decks. Crea uno para comenzar.</p>
       )}
     </div>

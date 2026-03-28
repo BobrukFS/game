@@ -329,6 +329,28 @@ export async function updateCard(
   return result
 }
 
+export async function reorderCardsByDeck(
+  deckId: string,
+  orderedCardIds: string[]
+) {
+  if (!Array.isArray(orderedCardIds) || orderedCardIds.length === 0) {
+    return []
+  }
+
+  const uniqueOrderedIds = Array.from(new Set(orderedCardIds.filter(Boolean)))
+
+  const result = await Promise.all(
+    uniqueOrderedIds.map((cardId, index) =>
+      prismaService.cards.updateCard(cardId, {
+        priority: index + 1,
+      })
+    )
+  )
+
+  revalidatePath(`/editor`)
+  return result
+}
+
 export async function deleteCard(id: string) {
   const result = await prismaService.cards.deleteCard(id)
   revalidatePath(`/editor`)
@@ -427,6 +449,11 @@ export async function deleteOption(id: string) {
 
 export async function fetchEffectsByOptionId(optionId: string) {
   return prismaService.effects.getEffectsByOptionId(optionId)
+}
+
+export async function fetchFlagKeysByGameId(gameId: string) {
+  const rows = await prismaService.effects.getFlagKeysByGameId(gameId)
+  return rows.map((row) => row.key)
 }
 
 export async function createEffect(
@@ -610,18 +637,29 @@ export async function deleteWorldState(id: string, gameId: string) {
 
 export async function fetchGameLogicConfig(gameId: string) {
   const config = await prismaService.gameLogic.getGameLogicByGameId(gameId)
+
   return {
     counters: (config?.counters as unknown as InteractionCounterConfig[]) || [],
     rules: (config?.rules as unknown as InteractionRule[]) || [],
+    weightRules: (config?.weightRules as unknown as import("@/lib/domain").SelectionWeightRule[]) || [],
+    constraintRules:
+      (config?.constraintRules as unknown as import("@/lib/domain").SelectionConstraintRule[]) || [],
   }
 }
 
 export async function saveGameLogicConfig(
   gameId: string,
-  data: { counters: InteractionCounterConfig[]; rules: InteractionRule[] }
+  data: {
+    counters: InteractionCounterConfig[]
+    rules: InteractionRule[]
+    weightRules?: import("@/lib/domain").SelectionWeightRule[]
+    constraintRules?: import("@/lib/domain").SelectionConstraintRule[]
+  }
 ) {
   const counters = Array.isArray(data.counters) ? data.counters : []
   const rules = Array.isArray(data.rules) ? data.rules : []
+  const weightRules = Array.isArray(data.weightRules) ? data.weightRules : []
+  const constraintRules = Array.isArray(data.constraintRules) ? data.constraintRules : []
 
   for (const counter of counters) {
     if (!counter?.key?.trim()) {
@@ -635,12 +673,163 @@ export async function saveGameLogicConfig(
     }
   }
 
+  for (const weightRule of weightRules) {
+    if (!weightRule?.id || !weightRule?.targetType || !weightRule?.targetKey) {
+      throw new Error("Cada regla de peso debe tener id, targetType y targetKey")
+    }
+
+    if (!["add", "multiply", "set"].includes(weightRule.operation)) {
+      throw new Error("Operacion invalida en regla de peso")
+    }
+
+    if (!Number.isFinite(weightRule.value)) {
+      throw new Error("Valor invalido en regla de peso")
+    }
+
+    if (Array.isArray(weightRule.conditions)) {
+      for (const condition of weightRule.conditions) {
+        if (!condition?.source || !condition?.key?.trim()) {
+          throw new Error("Condicion invalida en regla de peso")
+        }
+
+        if (!["counter", "stat", "world", "flag"].includes(condition.source)) {
+          throw new Error("Fuente invalida en condicion de regla de peso")
+        }
+
+        if (!["eq", "gt", "gte", "lt", "lte"].includes(condition.operator)) {
+          throw new Error("Operador invalido en condicion de regla de peso")
+        }
+
+        if (typeof condition.value === "undefined" || condition.value === null) {
+          throw new Error("Valor faltante en condicion de regla de peso")
+        }
+      }
+    }
+  }
+
+  for (const constraintRule of constraintRules) {
+    if (!constraintRule?.id || !constraintRule?.targetType || !constraintRule?.targetKey) {
+      throw new Error("Cada regla de restriccion debe tener id, targetType y targetKey")
+    }
+
+    if (!constraintRule.counterCondition && !Number.isFinite(constraintRule.maxOccurrences)) {
+      throw new Error("La regla de restriccion requiere counterCondition o maxOccurrences")
+    }
+
+    if (
+      Number.isFinite(constraintRule.maxOccurrences) &&
+      Number(constraintRule.maxOccurrences) < 0
+    ) {
+      throw new Error("maxOccurrences invalido en regla de restriccion")
+    }
+
+    if (
+      constraintRule.counterCondition &&
+      !constraintRule.counterCondition.counterKey?.trim()
+    ) {
+      throw new Error("counterCondition invalida en regla de restriccion")
+    }
+  }
+
   const result = await prismaService.gameLogic.upsertGameLogicByGameId({
     gameId,
     counters,
     rules,
+    weightRules,
+    constraintRules,
   })
 
   revalidatePath(`/editor/${gameId}/stats`)
   return result
+}
+
+export async function bootstrapSelectionLogicSetup(gameId: string) {
+  const baseCounters: InteractionCounterConfig[] = [
+    {
+      key: "interactions.total",
+      scope: "global",
+      description: "Cantidad total de interacciones resueltas",
+    },
+    {
+      key: "interactions.cycle",
+      scope: "global",
+      description: "Interacciones acumuladas dentro del ciclo actual",
+    },
+    {
+      key: "cards.shown.total",
+      scope: "global",
+      description: "Cantidad total de cartas mostradas",
+    },
+    {
+      key: "cards.shown.cycle",
+      scope: "global",
+      description: "Cantidad de cartas mostradas en el ciclo actual",
+    },
+    {
+      key: "decks.completed.cycle",
+      scope: "global",
+      description: "Cantidad de flujos de deck finalizados en el ciclo actual",
+    },
+  ]
+
+  const baseWorldStates = [
+    { key: "world.cycle", valueType: "number", value: "1" },
+    { key: "world.day", valueType: "number", value: "1" },
+    { key: "world.phase", valueType: "string", value: "day" },
+    { key: "world.context", valueType: "string", value: "default" },
+  ] as const
+
+  const [config, worldStates] = await Promise.all([
+    prismaService.gameLogic.getGameLogicByGameId(gameId),
+    prismaService.worldStates.getWorldStatesByGameId(gameId),
+  ])
+
+  const existingCounters = ((config?.counters as unknown as InteractionCounterConfig[]) || []).filter(
+    (counter) => counter?.key?.trim()
+  )
+
+  const counterByKey = new Map(existingCounters.map((counter) => [counter.key, counter]))
+
+  for (const counter of baseCounters) {
+    if (!counterByKey.has(counter.key)) {
+      counterByKey.set(counter.key, counter)
+    }
+  }
+
+  const mergedCounters = Array.from(counterByKey.values())
+  const existingRules = (config?.rules as unknown as InteractionRule[]) || []
+  const existingWeightRules = (config?.weightRules as unknown as import("@/lib/domain").SelectionWeightRule[]) || []
+  const existingConstraintRules =
+    (config?.constraintRules as unknown as import("@/lib/domain").SelectionConstraintRule[]) || []
+
+  await prismaService.gameLogic.upsertGameLogicByGameId({
+    gameId,
+    counters: mergedCounters,
+    rules: existingRules,
+    weightRules: existingWeightRules,
+    constraintRules: existingConstraintRules,
+  })
+
+  const existingWorldStateKeys = new Set(worldStates.map((ws) => ws.key))
+  let createdWorldStates = 0
+
+  for (const worldState of baseWorldStates) {
+    if (!existingWorldStateKeys.has(worldState.key)) {
+      await prismaService.worldStates.createWorldState({
+        gameId,
+        key: worldState.key,
+        valueType: worldState.valueType,
+        value: worldState.value,
+      })
+      createdWorldStates += 1
+    }
+  }
+
+  revalidatePath(`/editor/${gameId}/logic`)
+  revalidatePath(`/editor/${gameId}/stats`)
+
+  return {
+    createdWorldStates,
+    countersTotal: mergedCounters.length,
+  }
 }

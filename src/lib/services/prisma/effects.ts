@@ -7,6 +7,28 @@ export async function getEffectsByOptionId(optionId: string) {
   });
 }
 
+export async function getFlagKeysByGameId(gameId: string) {
+  return prisma.effect.findMany({
+    where: {
+      type: "set_flag",
+      option: {
+        card: {
+          deck: {
+            gameId,
+          },
+        },
+      },
+    },
+    select: {
+      key: true,
+    },
+    distinct: ["key"],
+    orderBy: {
+      key: "asc",
+    },
+  })
+}
+
 export async function createEffect(data: {
   optionId: string;
   type: string;

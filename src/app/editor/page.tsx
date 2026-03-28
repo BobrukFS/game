@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { fetchGames, createGame, deleteGame } from "@/app/actions"
+import { fetchGames, createGame } from "@/app/actions"
 import { Game } from "@/lib/domain"
 
 export default function EditorPage() {
@@ -37,17 +37,6 @@ export default function EditorPage() {
       setShowForm(false)
     } catch (error) {
       console.error("Error creating game:", error)
-    }
-  }
-
-  async function handleDeleteGame(id: string) {
-    if (!confirm("¿Eliminar este juego?")) return
-    try {
-      await deleteGame(id)
-      await loadGames()
-      window.dispatchEvent(new Event("games:refresh"))
-    } catch (error) {
-      console.error("Error deleting game:", error)
     }
   }
 
@@ -106,24 +95,16 @@ export default function EditorPage() {
       <div className="grid gap-4">
         {games.map((game) => (
           <div key={game.id} className="bg-slate-800 p-6 rounded border border-slate-700 hover:border-slate-600">
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <Link href={`/editor/${game.id}`}>
-                  <h2 className="text-xl font-bold text-blue-400 hover:text-blue-300 cursor-pointer">
-                    {game.name}
-                  </h2>
-                </Link>
-                <p className="text-slate-400 mt-2">{game.description}</p>
-                <p className="text-xs text-slate-500 mt-4">
-                  {new Date(game.createdAt || "").toLocaleDateString()}
-                </p>
-              </div>
-              <button
-                onClick={() => handleDeleteGame(game.id)}
-                className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-white text-sm"
-              >
-                Eliminar
-              </button>
+            <div className="flex-1">
+              <Link href={`/editor/${game.id}`}>
+                <h2 className="text-xl font-bold text-blue-400 hover:text-blue-300 cursor-pointer">
+                  {game.name}
+                </h2>
+              </Link>
+              <p className="text-slate-400 mt-2">{game.description}</p>
+              <p className="text-xs text-slate-500 mt-4">
+                {new Date(game.createdAt || "").toLocaleDateString()}
+              </p>
             </div>
           </div>
         ))}

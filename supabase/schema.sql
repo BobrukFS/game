@@ -75,7 +75,9 @@ create table if not exists game_logic_configs (
   id uuid primary key default gen_random_uuid(),
   game_id uuid not null unique references games(id) on delete cascade,
   counters jsonb not null default '[]'::jsonb,
-  rules jsonb not null default '[]'::jsonb
+  rules jsonb not null default '[]'::jsonb,
+  weight_rules jsonb not null default '[]'::jsonb,
+  constraint_rules jsonb not null default '[]'::jsonb
 );
 
 create index if not exists idx_games_id on games(id);

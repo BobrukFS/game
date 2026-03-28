@@ -11,14 +11,24 @@ export interface OptionWithEffects {
 
 export async function getAllDecks() {
   return prisma.deck.findMany({
-    orderBy: { id: "asc" },
+    include: {
+      _count: {
+        select: { cards: true },
+      },
+    },
+    orderBy: { name: "asc" },
   });
 }
 
 export async function getDecksByGameId(gameId: string) {
   return prisma.deck.findMany({
     where: { gameId },
-    orderBy: { id: "asc" },
+    include: {
+      _count: {
+        select: { cards: true },
+      },
+    },
+    orderBy: { name: "asc" },
   });
 }
 

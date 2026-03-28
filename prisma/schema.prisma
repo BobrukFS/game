@@ -135,6 +135,8 @@ model GameLogicConfig {
   gameId   String  @unique @map("game_id") @db.Uuid
   counters Json
   rules    Json
+  weightRules Json @default("[]") @map("weight_rules")
+  constraintRules Json @default("[]") @map("constraint_rules")
 
   game     Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
 

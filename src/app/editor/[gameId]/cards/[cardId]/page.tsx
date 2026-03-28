@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import {
   createCondition,
@@ -10,31 +10,184 @@ import {
   deleteEffect,
   deleteOption,
   fetchCardById,
+  fetchCardsByDeckId,
+  fetchFlagKeysByGameId,
+  fetchStatsByGameId,
+  fetchWorldStatesByGameId,
   updateCard,
+  updateCondition,
+  updateEffect,
+  updateOption,
 } from "@/app/actions"
-import { Condition, ConditionType } from "@/lib/domain"
-import { CardWithRelations } from "@/lib/services/prisma/cards"
-import { OptionWithEffects } from "@/lib/services/prisma/options"
+import type { ConditionType } from "@/lib/domain"
+import type { CardWithRelations } from "@/lib/services/prisma/cards"
+import type { OptionWithEffects } from "@/lib/services/prisma/options"
+import ConfirmModal from "@/components/editor/ConfirmModal"
 
 type CardType = "decision" | "narrative" | "interactive"
 
+type DraftCondition = {
+  id?: string
+  type: ConditionType
+  key: string
+  value: string
+}
+
+type DraftEffect = {
+  id?: string
+  type: string
+  key: string
+  value: string
+}
+
+type DraftOption = {
+  id?: string
+  text: string
+  order: number
+  nextCardId: string
+  effects: DraftEffect[]
+}
+
+type DeleteTarget =
+  | { kind: "condition"; id?: string; index?: number }
+  | { kind: "option"; id?: string; index?: number }
+  | { kind: "effect"; optionIndex: number; effectIndex: number }
+
+type NextCardPreview = {
+  id: string
+  title: string
+  description: string
+  type: string
+  priority: number
+}
+
+function TrashButton({
+  onClick,
+  title,
+  disabled,
+}: {
+  onClick: () => void
+  title: string
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      className="rounded-md border border-red-400/50 p-1.5 text-red-300 transition-colors hover:bg-red-600/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M3 6h18" />
+        <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+        <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+      </svg>
+    </button>
+  )
+}
+
+function PencilButton({
+  onClick,
+  title,
+  disabled,
+}: {
+  onClick: () => void
+  title: string
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      className="rounded-md border border-amber-400/50 p-1.5 text-amber-300 transition-colors hover:bg-amber-600/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M4 20h4l10-10-4-4L4 16v4Z" />
+        <path d="m12 6 4 4" />
+      </svg>
+    </button>
+  )
+}
+
+function NextCardPreviewPanel({
+  card,
+  label,
+}: {
+  card: NextCardPreview | null
+  label: string
+}) {
+  if (!card) return null
+
+  return (
+    <div className="mt-2 rounded-md border border-slate-600 bg-slate-900/70 p-3">
+      <p className="mb-2 text-xs uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="text-sm font-semibold text-slate-100">{card.title}</p>
+      <p className="mt-1 text-xs text-slate-400">
+        Tipo: {card.type} · Nivel sugerido: {card.priority}
+      </p>
+      <p className="mt-2 line-clamp-2 text-xs text-slate-300">
+        {card.description || "Sin descripcion"}
+      </p>
+    </div>
+  )
+}
+
+function toDraftCondition(condition: {
+  id?: string
+  type: string
+  key: string
+  value: string
+}): DraftCondition {
+  return {
+    id: condition.id,
+    type: condition.type as ConditionType,
+    key: condition.key,
+    value: condition.value ?? "",
+  }
+}
+
+function toDraftOption(option: OptionWithEffects): DraftOption {
+  return {
+    id: option.id,
+    text: option.text,
+    order: option.order,
+    nextCardId: option.nextCardId || "",
+    effects: (option.effects || []).map((effect) => ({
+      id: effect.id,
+      type: effect.type,
+      key: effect.key,
+      value: String(effect.value ?? ""),
+    })),
+  }
+}
+
 export default function CardPage() {
   const params = useParams()
+  const gameId = params.gameId as string
   const cardId = params.cardId as string
 
   const [card, setCard] = useState<CardWithRelations | null>(null)
-  const [conditions, setConditions] = useState<Condition[]>([])
-  const [options, setOptions] = useState<OptionWithEffects[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
 
   const [editingCard, setEditingCard] = useState(false)
   const [cardForm, setCardForm] = useState({
     title: "",
     type: "narrative" as CardType,
     description: "",
-    priority: 0,
     tags: "",
   })
+
+  const [baseConditions, setBaseConditions] = useState<DraftCondition[]>([])
+  const [baseOptions, setBaseOptions] = useState<DraftOption[]>([])
+
+  const [draftConditions, setDraftConditions] = useState<DraftCondition[]>([])
+  const [draftOptions, setDraftOptions] = useState<DraftOption[]>([])
 
   const [newCondition, setNewCondition] = useState<{ type: ConditionType | ""; key: string; value: string }>({
     type: "",
@@ -42,30 +195,107 @@ export default function CardPage() {
     value: "",
   })
   const [newOption, setNewOption] = useState({ text: "", nextCardId: "" })
-  const [newEffect, setNewEffect] = useState<{ optionId: string; type: string; key: string; value: string } | null>(
+
+  const [editingOptionIndex, setEditingOptionIndex] = useState<number | null>(null)
+
+  const [newEffect, setNewEffect] = useState<{ optionIndex: number; type: string; key: string; value: string } | null>(
     null
   )
 
+  const [deleteModal, setDeleteModal] = useState<{ open: boolean; target: DeleteTarget | null }>({
+    open: false,
+    target: null,
+  })
+
+  const [statKeys, setStatKeys] = useState<string[]>([])
+  const [worldStateKeys, setWorldStateKeys] = useState<string[]>([])
+  const [flagKeys, setFlagKeys] = useState<string[]>([])
+  const [availableNextCards, setAvailableNextCards] = useState<NextCardPreview[]>([])
+
+  const nextCardMap = useMemo(() => {
+    return new Map(availableNextCards.map((item) => [item.id, item]))
+  }, [availableNextCards])
+
+  const conditionKeyOptions = useMemo(() => {
+    if (newCondition.type === "stat_min" || newCondition.type === "stat_max") {
+      return statKeys
+    }
+
+    if (newCondition.type === "world_state") {
+      return worldStateKeys
+    }
+
+    if (newCondition.type === "flag" || newCondition.type === "not_flag") {
+      return flagKeys
+    }
+
+    return []
+  }, [flagKeys, newCondition.type, statKeys, worldStateKeys])
+
+  const selectedNextCardPreview = useMemo(() => {
+    if (!newOption.nextCardId) return null
+    return nextCardMap.get(newOption.nextCardId) || null
+  }, [newOption.nextCardId, nextCardMap])
+
   useEffect(() => {
-    loadCard()
+    void loadCardAndRefs()
   }, [cardId])
 
-  async function loadCard() {
+  async function loadReferences(deckId: string) {
+    const [stats, worldStates, flags, deckCards] = await Promise.all([
+      fetchStatsByGameId(gameId),
+      fetchWorldStatesByGameId(gameId),
+      fetchFlagKeysByGameId(gameId),
+      fetchCardsByDeckId(deckId),
+    ])
+
+    setStatKeys(stats.map((stat) => stat.key))
+    setWorldStateKeys(worldStates.map((ws) => ws.key))
+    setFlagKeys(flags)
+    setAvailableNextCards(
+      deckCards
+        .filter((deckCard) => deckCard.id !== cardId)
+        .map((deckCard) => ({
+          id: deckCard.id,
+          title: deckCard.title,
+          description: deckCard.description,
+          type: deckCard.type,
+          priority: deckCard.priority,
+        }))
+    )
+  }
+
+  async function loadCardAndRefs() {
     try {
       setIsLoading(true)
       const cardData = await fetchCardById(cardId)
-      if (cardData) {
-        setCard(cardData as CardWithRelations)
-        setCardForm({
-          title: cardData.title,
-          type: cardData.type as CardType,
-          description: cardData.description,
-          priority: cardData.priority || 0,
-          tags: cardData.tags.join(", "),
+      if (!cardData) return
+
+      setCard(cardData as CardWithRelations)
+      setCardForm({
+        title: cardData.title,
+        type: cardData.type as CardType,
+        description: cardData.description,
+        tags: cardData.tags.join(", "),
+      })
+
+      const initialConditions = (cardData.conditions || []).map((condition) =>
+        toDraftCondition({
+          id: condition.id,
+          type: condition.type,
+          key: condition.key,
+          value: condition.value,
         })
-        setConditions((cardData.conditions || []) as Condition[])
-        setOptions((cardData.options || []) as OptionWithEffects[])
-      }
+      )
+
+      const initialOptions = (cardData.options || []).map((option) => toDraftOption(option as OptionWithEffects))
+
+      setBaseConditions(initialConditions)
+      setBaseOptions(initialOptions)
+      setDraftConditions(initialConditions)
+      setDraftOptions(initialOptions)
+
+      await loadReferences(cardData.deckId)
     } catch (error) {
       console.error("Error loading card:", error)
     } finally {
@@ -73,141 +303,259 @@ export default function CardPage() {
     }
   }
 
-  async function handleSaveCard() {
-    const title = cardForm.title.trim()
-    if (!title || !Number.isInteger(cardForm.priority)) {
-      return
-    }
+  function resetDraftsToBase() {
+    setDraftConditions(baseConditions)
+    setDraftOptions(baseOptions)
+    setNewCondition({ type: "", key: "", value: "" })
+    setNewOption({ text: "", nextCardId: "" })
+    setNewEffect(null)
+    setEditingOptionIndex(null)
 
-    if (cardForm.type === "interactive") {
-      return
-    }
-
-    if (card && cardForm.type === "narrative" && options.length > 0) {
-      return
-    }
-
-    try {
-      await updateCard(cardId, {
-        title,
-        type: cardForm.type,
-        description: cardForm.description.trim(),
-        priority: cardForm.priority,
-        tags: cardForm.tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
+    if (card) {
+      setCardForm({
+        title: card.title,
+        type: card.type as CardType,
+        description: card.description,
+        tags: card.tags.join(", "),
       })
-      setEditingCard(false)
-      await loadCard()
-    } catch (error) {
-      console.error("Error saving card:", error)
     }
   }
 
-  async function handleAddCondition(e: React.FormEvent) {
-    e.preventDefault()
+  function handleEditToggle() {
+    if (editingCard) {
+      resetDraftsToBase()
+    }
+    setEditingCard((prev) => !prev)
+  }
 
-    const type = newCondition.type.trim()
+  function requestDelete(target: DeleteTarget) {
+    if (!editingCard) return
+    setDeleteModal({ open: true, target })
+  }
+
+  function confirmDeleteInDraft() {
+    const target = deleteModal.target
+    if (!target) return
+
+    if (target.kind === "condition") {
+      setDraftConditions((prev) => {
+        if (typeof target.index === "number") {
+          return prev.filter((_, index) => index !== target.index)
+        }
+        return prev.filter((condition) => condition.id !== target.id)
+      })
+    }
+
+    if (target.kind === "option") {
+      setDraftOptions((prev) => {
+        if (typeof target.index === "number") {
+          return prev.filter((_, index) => index !== target.index)
+        }
+        return prev.filter((option) => option.id !== target.id)
+      })
+    }
+
+    if (target.kind === "effect") {
+      setDraftOptions((prev) =>
+        prev.map((option, optionIndex) => {
+          if (optionIndex !== target.optionIndex) return option
+          return {
+            ...option,
+            effects: option.effects.filter((_, effectIndex) => effectIndex !== target.effectIndex),
+          }
+        })
+      )
+    }
+
+    setDeleteModal({ open: false, target: null })
+  }
+
+  function addConditionDraft(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingCard) return
+
+    const type = newCondition.type.trim() as ConditionType
     const key = newCondition.key.trim()
     const value = newCondition.value.trim()
 
-    if (!type || !key) {
+    if (!type || !key) return
+
+    if ((type === "stat_min" || type === "stat_max" || type === "world_state") && !value) {
       return
     }
 
-    if ((type === "stat_min" || type === "stat_max") && !value) {
-      return
-    }
-
-    try {
-      await createCondition(cardId, {
-        type,
-        key,
-        value: type === "flag" || type === "not_flag" ? undefined : value,
-      })
-      setNewCondition({ type: "", key: "", value: "" })
-      await loadCard()
-    } catch (error) {
-      console.error("Error adding condition:", error)
-    }
+    setDraftConditions((prev) => [...prev, { type, key, value }])
+    setNewCondition({ type: "", key: "", value: "" })
   }
 
-  async function handleDeleteCondition(conditionId: string) {
-    try {
-      await deleteCondition(conditionId)
-      await loadCard()
-    } catch (error) {
-      console.error("Error deleting condition:", error)
-    }
-  }
-
-  async function handleAddOption(e: React.FormEvent) {
+  function addOptionDraft(e: React.FormEvent) {
     e.preventDefault()
-
-    if (cardForm.type !== "decision") {
-      return
-    }
-
-    if (options.length >= 2) {
-      return
-    }
+    if (!editingCard) return
+    if (cardForm.type !== "decision") return
+    if (draftOptions.length >= 2) return
 
     const text = newOption.text.trim()
-    if (!text) {
-      return
-    }
+    if (!text) return
 
-    try {
-      await createOption({
-        cardId,
+    setDraftOptions((prev) => [
+      ...prev,
+      {
         text,
-        order: options.length + 1,
-        nextCardId: newOption.nextCardId.trim() || undefined,
-      })
-      setNewOption({ text: "", nextCardId: "" })
-      await loadCard()
-    } catch (error) {
-      console.error("Error adding option:", error)
-    }
+        order: prev.length + 1,
+        nextCardId: newOption.nextCardId.trim(),
+        effects: [],
+      },
+    ])
+
+    setNewOption({ text: "", nextCardId: "" })
   }
 
-  async function handleDeleteOption(optionId: string) {
-    try {
-      await deleteOption(optionId)
-      await loadCard()
-    } catch (error) {
-      console.error("Error deleting option:", error)
-    }
-  }
-
-  async function handleAddEffect(e: React.FormEvent, optionId: string) {
+  function addEffectDraft(e: React.FormEvent, optionIndex: number) {
     e.preventDefault()
-    if (!newEffect || newEffect.optionId !== optionId) return
+    if (!editingCard) return
+    if (!newEffect || newEffect.optionIndex !== optionIndex) return
 
     const type = newEffect.type.trim()
     const key = newEffect.key.trim()
     const value = newEffect.value.trim()
+    if (!type || !key || !value) return
 
-    if (!type || !key || !value) {
-      return
-    }
+    setDraftOptions((prev) =>
+      prev.map((option, index) => {
+        if (index !== optionIndex) return option
+        return {
+          ...option,
+          effects: [...option.effects, { type, key, value }],
+        }
+      })
+    )
 
-    try {
-      await createEffect(optionId, { type, key, value })
-      setNewEffect(null)
-      await loadCard()
-    } catch (error) {
-      console.error("Error adding effect:", error)
-    }
+    setNewEffect(null)
   }
 
-  async function handleDeleteEffect(effectId: string) {
+  function updateOptionDraft(optionIndex: number, patch: Partial<DraftOption>) {
+    setDraftOptions((prev) => prev.map((option, idx) => (idx === optionIndex ? { ...option, ...patch } : option)))
+  }
+
+  async function saveAllChanges() {
+    if (!card || !editingCard) return
+
+    const title = cardForm.title.trim()
+    if (!title) return
+
+    if (cardForm.type === "interactive") return
+
+    if (cardForm.type === "narrative" && draftOptions.length > 0) return
+
     try {
-      await deleteEffect(effectId)
-      await loadCard()
+      setIsSaving(true)
+
+      await updateCard(card.id, {
+        title,
+        type: cardForm.type,
+        description: cardForm.description.trim(),
+        tags: cardForm.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      })
+
+      const draftConditionIds = new Set(draftConditions.map((condition) => condition.id).filter(Boolean) as string[])
+
+      for (const baseCondition of baseConditions) {
+        if (baseCondition.id && !draftConditionIds.has(baseCondition.id)) {
+          await deleteCondition(baseCondition.id)
+        }
+      }
+
+      for (const condition of draftConditions) {
+        const payload = {
+          type: condition.type,
+          key: condition.key.trim(),
+          value:
+            condition.type === "flag" || condition.type === "not_flag"
+              ? undefined
+              : condition.value.trim(),
+        }
+
+        if (condition.id) {
+          await updateCondition(condition.id, payload)
+        } else {
+          await createCondition(card.id, payload)
+        }
+      }
+
+      const draftOptionIds = new Set(draftOptions.map((option) => option.id).filter(Boolean) as string[])
+
+      for (const baseOption of baseOptions) {
+        if (baseOption.id && !draftOptionIds.has(baseOption.id)) {
+          await deleteOption(baseOption.id)
+        }
+      }
+
+      for (let optionIndex = 0; optionIndex < draftOptions.length; optionIndex += 1) {
+        const optionDraft = draftOptions[optionIndex]
+
+        let optionId = optionDraft.id
+        const optionPayload = {
+          text: optionDraft.text.trim(),
+          order: optionIndex + 1,
+          nextCardId: optionDraft.nextCardId.trim() || null,
+        }
+
+        if (!optionPayload.text) {
+          continue
+        }
+
+        if (optionId) {
+          await updateOption(optionId, optionPayload)
+        } else {
+          const createdOption = await createOption({
+            cardId: card.id,
+            text: optionPayload.text,
+            order: optionPayload.order,
+            nextCardId: optionPayload.nextCardId || undefined,
+          })
+          optionId = createdOption.id
+        }
+
+        const baseOption = optionDraft.id
+          ? baseOptions.find((option) => option.id === optionDraft.id)
+          : undefined
+
+        const draftEffectIds = new Set(optionDraft.effects.map((effect) => effect.id).filter(Boolean) as string[])
+
+        for (const baseEffect of baseOption?.effects || []) {
+          if (baseEffect.id && !draftEffectIds.has(baseEffect.id)) {
+            await deleteEffect(baseEffect.id)
+          }
+        }
+
+        for (const effect of optionDraft.effects) {
+          const effectPayload = {
+            type: effect.type.trim(),
+            key: effect.key.trim(),
+            value: effect.value.trim(),
+          }
+
+          if (!effectPayload.type || !effectPayload.key || !effectPayload.value) {
+            continue
+          }
+
+          if (effect.id) {
+            await updateEffect(effect.id, effectPayload)
+          } else if (optionId) {
+            await createEffect(optionId, effectPayload)
+          }
+        }
+      }
+
+      setEditingCard(false)
+      await loadCardAndRefs()
     } catch (error) {
-      console.error("Error deleting effect:", error)
+      console.error("Error saving card changes:", error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -218,23 +566,20 @@ export default function CardPage() {
     <div className="max-w-6xl p-8">
       <section className="mb-8">
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-4xl font-bold">{card.title}</h1>
-          <button
-            onClick={() => setEditingCard(!editingCard)}
-            className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-          >
-            {editingCard ? "Cancelar" : "Editar Carta"}
-          </button>
+          <h1 className="text-4xl font-bold">{cardForm.title || card.title}</h1>
+          {!editingCard && (
+            <button
+              type="button"
+              onClick={handleEditToggle}
+              className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+            >
+              Editar Carta
+            </button>
+          )}
         </div>
 
         {editingCard ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              handleSaveCard()
-            }}
-            className="space-y-4 rounded bg-slate-800 p-6"
-          >
+          <div className="space-y-4 rounded bg-slate-800 p-6">
             <div>
               <label htmlFor="edit-card-title" className="mb-2 block text-sm font-semibold text-slate-200">
                 Titulo
@@ -243,7 +588,7 @@ export default function CardPage() {
                 id="edit-card-title"
                 type="text"
                 value={cardForm.title}
-                onChange={(e) => setCardForm({ ...cardForm, title: e.target.value })}
+                onChange={(e) => setCardForm((prev) => ({ ...prev, title: e.target.value }))}
                 className="w-full rounded bg-slate-700 px-4 py-2 text-white"
                 required
               />
@@ -256,9 +601,8 @@ export default function CardPage() {
               <select
                 id="edit-card-type"
                 value={cardForm.type}
-                onChange={(e) => setCardForm({ ...cardForm, type: e.target.value as CardType })}
+                onChange={(e) => setCardForm((prev) => ({ ...prev, type: e.target.value as CardType }))}
                 className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-                required
               >
                 <option value="narrative">Narrativo</option>
                 <option value="decision">Decision</option>
@@ -266,11 +610,6 @@ export default function CardPage() {
                   Interactivo (no habilitado)
                 </option>
               </select>
-              {cardForm.type === "narrative" && options.length > 0 && (
-                <p className="mt-2 text-xs text-amber-300">
-                  Para pasar a narrativo primero elimina las opciones existentes.
-                </p>
-              )}
             </div>
 
             <div>
@@ -280,23 +619,9 @@ export default function CardPage() {
               <textarea
                 id="edit-card-description"
                 value={cardForm.description}
-                onChange={(e) => setCardForm({ ...cardForm, description: e.target.value })}
+                onChange={(e) => setCardForm((prev) => ({ ...prev, description: e.target.value }))}
                 className="w-full rounded bg-slate-700 px-4 py-2 text-white"
                 rows={3}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="edit-card-priority" className="mb-2 block text-sm font-semibold text-slate-200">
-                Prioridad
-              </label>
-              <input
-                id="edit-card-priority"
-                type="number"
-                value={cardForm.priority}
-                onChange={(e) => setCardForm({ ...cardForm, priority: Number(e.target.value) })}
-                className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-                required
               />
             </div>
 
@@ -308,22 +633,18 @@ export default function CardPage() {
                 id="edit-card-tags"
                 type="text"
                 value={cardForm.tags}
-                onChange={(e) => setCardForm({ ...cardForm, tags: e.target.value })}
+                onChange={(e) => setCardForm((prev) => ({ ...prev, tags: e.target.value }))}
                 className="w-full rounded bg-slate-700 px-4 py-2 text-white"
                 placeholder="Tags separadas por coma"
               />
             </div>
-
-            <button type="submit" className="rounded bg-green-600 px-4 py-2 text-white hover:bg-green-700">
-              Guardar
-            </button>
-          </form>
+          </div>
         ) : (
           <div className="rounded bg-slate-800 p-6">
-            <p className="mb-2 text-slate-300">{card.description}</p>
+            <p className="mb-2 text-slate-300">{cardForm.description || card.description}</p>
             <div className="flex gap-4 text-sm text-slate-400">
-              <span>Tipo: {card.type}</span>
-              <span>Priority: {card.priority}</span>
+              <span>Tipo: {cardForm.type || card.type}</span>
+              <span>Conexiones: {draftOptions.length}</span>
             </div>
           </div>
         )}
@@ -333,7 +654,7 @@ export default function CardPage() {
         <section>
           <h2 className="mb-4 text-2xl font-bold">Condiciones</h2>
 
-          <form onSubmit={handleAddCondition} className="mb-4 rounded bg-slate-800 p-4">
+          <form onSubmit={addConditionDraft} className="mb-4 rounded bg-slate-800 p-4">
             <label htmlFor="new-condition-type" className="mb-1 block text-xs font-semibold text-slate-300">
               Tipo
             </label>
@@ -344,12 +665,12 @@ export default function CardPage() {
                 setNewCondition((prev) => ({
                   ...prev,
                   type: e.target.value as ConditionType | "",
-                  value:
-                    e.target.value === "flag" || e.target.value === "not_flag" ? "" : prev.value,
+                  key: "",
+                  value: e.target.value === "flag" || e.target.value === "not_flag" ? "" : prev.value,
                 }))
               }
-              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white"
-              required
+              disabled={!editingCard}
+              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
             >
               <option value="">Selecciona tipo</option>
               <option value="stat_min">Stat Min</option>
@@ -358,18 +679,25 @@ export default function CardPage() {
               <option value="not_flag">Not Flag</option>
               <option value="world_state">World State</option>
             </select>
+
             <label htmlFor="new-condition-key" className="mb-1 block text-xs font-semibold text-slate-300">
               Key
             </label>
-            <input
+            <select
               id="new-condition-key"
-              type="text"
-              placeholder="Key"
               value={newCondition.key}
-              onChange={(e) => setNewCondition({ ...newCondition, key: e.target.value })}
-              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white placeholder-slate-500"
-              required
-            />
+              onChange={(e) => setNewCondition((prev) => ({ ...prev, key: e.target.value }))}
+              disabled={!editingCard || !newCondition.type || conditionKeyOptions.length === 0}
+              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+            >
+              <option value="">{newCondition.type ? "Selecciona key" : "Selecciona tipo primero"}</option>
+              {conditionKeyOptions.map((key) => (
+                <option key={key} value={key}>
+                  {key}
+                </option>
+              ))}
+            </select>
+
             {(newCondition.type === "stat_min" || newCondition.type === "stat_max" || newCondition.type === "world_state") && (
               <>
                 <label htmlFor="new-condition-value" className="mb-1 block text-xs font-semibold text-slate-300">
@@ -378,39 +706,49 @@ export default function CardPage() {
                 <input
                   id="new-condition-value"
                   type={newCondition.type === "world_state" ? "text" : "number"}
-                  step={newCondition.type === "world_state" ? undefined : "any"}
                   placeholder="0"
                   value={newCondition.value}
-                  onChange={(e) => setNewCondition({ ...newCondition, value: e.target.value })}
-                  className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white placeholder-slate-500"
-                  required
+                  onChange={(e) => setNewCondition((prev) => ({ ...prev, value: e.target.value }))}
+                  disabled={!editingCard}
+                  className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
                 />
               </>
             )}
-            <button type="submit" className="w-full rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700">
+
+            <button
+              type="submit"
+              disabled={!editingCard}
+              className="w-full rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
               Agregar
             </button>
           </form>
 
           <div className="space-y-2">
-            {conditions.map((c) => (
-              <div key={c.id} className="flex items-center justify-between rounded bg-slate-800 p-3">
+            {draftConditions.map((condition, index) => (
+              <div key={`${condition.id || "new"}-${index}`} className="flex items-center justify-between rounded bg-slate-800 p-3">
                 <div className="text-sm">
-                  <p className="font-semibold">{c.type}</p>
-                  {c.type === "flag" || c.type === "not_flag" ? (
-                    <p className="text-slate-400">{c.key}</p>
+                  <p className="font-semibold">{condition.type}</p>
+                  {condition.type === "flag" || condition.type === "not_flag" ? (
+                    <p className="text-slate-400">{condition.key}</p>
                   ) : (
                     <p className="text-slate-400">
-                      {c.key}: {String(c.value)}
+                      {condition.key}: {condition.value}
                     </p>
                   )}
                 </div>
-                <button
-                  onClick={() => handleDeleteCondition(c.id!)}
-                  className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
-                >
-                  Eliminar
-                </button>
+
+                <TrashButton
+                  onClick={() =>
+                    requestDelete(
+                      condition.id
+                        ? { kind: "condition", id: condition.id }
+                        : { kind: "condition", index }
+                    )
+                  }
+                  title="Eliminar condicion"
+                  disabled={!editingCard}
+                />
               </div>
             ))}
           </div>
@@ -419,154 +757,253 @@ export default function CardPage() {
         <section>
           <h2 className="mb-4 text-2xl font-bold">Opciones</h2>
 
-          {card.type !== "decision" ? (
+          {cardForm.type !== "decision" ? (
             <div className="rounded bg-slate-800 p-4 text-sm text-slate-300">
-              Esta carta es {card.type}. Solo las cartas de tipo decision tienen opciones y efectos.
+              Esta carta es {cardForm.type}. Solo las cartas decision tienen opciones y efectos.
             </div>
           ) : (
             <>
-              <form onSubmit={handleAddOption} className="mb-4 rounded bg-slate-800 p-4">
-                <label htmlFor="new-option-text" className="mb-1 block text-xs font-semibold text-slate-300">
-                  Texto de la opcion
-                </label>
-                <input
-                  id="new-option-text"
-                  type="text"
-                  placeholder="Texto de la opcion"
-                  value={newOption.text}
-                  onChange={(e) => setNewOption({ ...newOption, text: e.target.value })}
-                  className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white placeholder-slate-500"
-                  required
-                />
-                <label htmlFor="new-option-next-card" className="mb-1 block text-xs font-semibold text-slate-300">
-                  Next Card ID
-                </label>
-                <input
-                  id="new-option-next-card"
-                  type="text"
-                  placeholder="opcional"
-                  value={newOption.nextCardId}
-                  onChange={(e) => setNewOption({ ...newOption, nextCardId: e.target.value })}
-                  className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white placeholder-slate-500"
-                />
-                <button
-                  type="submit"
-                  disabled={options.length >= 2}
-                  className="w-full rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {options.length >= 2 ? "Maximo 2 opciones" : "Agregar opcion"}
-                </button>
-              </form>
+              {draftOptions.length < 2 ? (
+                <form onSubmit={addOptionDraft} className="mb-4 rounded bg-slate-800 p-4">
+                  <label htmlFor="new-option-text" className="mb-1 block text-xs font-semibold text-slate-300">
+                    Texto de la opcion
+                  </label>
+                  <input
+                    id="new-option-text"
+                    type="text"
+                    value={newOption.text}
+                    onChange={(e) => setNewOption((prev) => ({ ...prev, text: e.target.value }))}
+                    disabled={!editingCard}
+                    className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+                  />
+
+                  <label htmlFor="new-option-next-card" className="mb-1 block text-xs font-semibold text-slate-300">
+                    Siguiente carta
+                  </label>
+                  <select
+                    id="new-option-next-card"
+                    value={newOption.nextCardId}
+                    onChange={(e) => setNewOption((prev) => ({ ...prev, nextCardId: e.target.value }))}
+                    disabled={!editingCard}
+                    className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+                  >
+                    <option value="">Sin destino</option>
+                    {availableNextCards.map((nextCard) => (
+                      <option key={nextCard.id} value={nextCard.id}>
+                        {nextCard.title}
+                      </option>
+                    ))}
+                  </select>
+
+                  <NextCardPreviewPanel card={selectedNextCardPreview} label="Preview estilo notas" />
+
+                  <button
+                    type="submit"
+                    disabled={!editingCard}
+                    className="mt-3 w-full rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Agregar opcion
+                  </button>
+                </form>
+              ) : (
+                <p className="mb-4 rounded border border-slate-700 bg-slate-800 p-3 text-sm text-slate-300">
+                  Esta carta ya tiene 2 opciones. Elimina una para poder agregar otra.
+                </p>
+              )}
 
               <div className="space-y-4">
-                {options.map((opt) => (
-                  <div key={opt.id} className="rounded border border-slate-700 bg-slate-800 p-4">
-                    <div className="mb-3 flex items-start justify-between">
-                      <p className="font-semibold">{opt.text}</p>
-                      <button
-                        onClick={() => handleDeleteOption(opt.id)}
-                        className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
+                {draftOptions.map((option, optionIndex) => {
+                  const isEditingOption = editingOptionIndex === optionIndex
+                  const optionPreview = option.nextCardId ? nextCardMap.get(option.nextCardId) || null : null
 
-                    {opt.nextCardId && <p className="mb-3 text-xs text-slate-400">Next: {opt.nextCardId}</p>}
+                  return (
+                    <div key={`${option.id || "new-option"}-${optionIndex}`} className="rounded border border-slate-700 bg-slate-800 p-4">
+                      <div className="mb-3 flex items-start justify-between gap-2">
+                        {isEditingOption ? (
+                          <input
+                            value={option.text}
+                            onChange={(e) => updateOptionDraft(optionIndex, { text: e.target.value })}
+                            className="w-full rounded bg-slate-700 px-2 py-1 text-sm text-white"
+                          />
+                        ) : (
+                          <p className="font-semibold">{option.text}</p>
+                        )}
 
-                    <div className="mb-3 rounded bg-slate-700 p-3">
-                      <p className="mb-2 text-sm font-semibold">Efectos</p>
+                        <div className="flex items-center gap-2">
+                          <PencilButton
+                            onClick={() => setEditingOptionIndex((prev) => (prev === optionIndex ? null : optionIndex))}
+                            title={isEditingOption ? "Cerrar edicion" : "Editar opcion"}
+                            disabled={!editingCard}
+                          />
+                          <TrashButton
+                            onClick={() =>
+                              requestDelete(
+                                option.id
+                                  ? { kind: "option", id: option.id }
+                                  : { kind: "option", index: optionIndex }
+                              )
+                            }
+                            title="Eliminar opcion"
+                            disabled={!editingCard}
+                          />
+                        </div>
+                      </div>
 
-                      {newEffect?.optionId === opt.id ? (
-                        <form onSubmit={(e) => handleAddEffect(e, opt.id)} className="mb-2 space-y-2">
-                          <label htmlFor={`new-effect-type-${opt.id}`} className="block text-xs font-semibold text-slate-300">
-                            Tipo
-                          </label>
+                      {isEditingOption && (
+                        <div className="mb-3">
+                          <label className="mb-1 block text-xs font-semibold text-slate-300">Siguiente carta</label>
                           <select
-                            id={`new-effect-type-${opt.id}`}
-                            value={newEffect.type}
-                            onChange={(e) => setNewEffect({ ...newEffect, type: e.target.value })}
-                            className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
-                            required
+                            value={option.nextCardId}
+                            onChange={(e) => updateOptionDraft(optionIndex, { nextCardId: e.target.value })}
+                            className="w-full rounded bg-slate-700 px-2 py-1 text-sm text-white"
                           >
-                            <option value="">Tipo efecto</option>
-                            <option value="modify_stat">Modify Stat</option>
-                            <option value="set_flag">Set Flag</option>
-                            <option value="add_item">Add Item</option>
-                            <option value="remove_item">Remove Item</option>
-                            <option value="modify_world_state">Modify World State</option>
+                            <option value="">Sin destino</option>
+                            {availableNextCards.map((nextCard) => (
+                              <option key={nextCard.id} value={nextCard.id}>
+                                {nextCard.title}
+                              </option>
+                            ))}
                           </select>
-                          <label htmlFor={`new-effect-key-${opt.id}`} className="block text-xs font-semibold text-slate-300">
-                            Key
-                          </label>
-                          <input
-                            id={`new-effect-key-${opt.id}`}
-                            type="text"
-                            placeholder="Key"
-                            value={newEffect.key}
-                            onChange={(e) => setNewEffect({ ...newEffect, key: e.target.value })}
-                            className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white placeholder-slate-500"
-                            required
-                          />
-                          <label htmlFor={`new-effect-value-${opt.id}`} className="block text-xs font-semibold text-slate-300">
-                            Value
-                          </label>
-                          <input
-                            id={`new-effect-value-${opt.id}`}
-                            type="text"
-                            placeholder="Value"
-                            value={newEffect.value}
-                            onChange={(e) => setNewEffect({ ...newEffect, value: e.target.value })}
-                            className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white placeholder-slate-500"
-                            required
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              type="submit"
-                              className="flex-1 rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700"
-                            >
-                              Agregar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setNewEffect(null)}
-                              className="flex-1 rounded bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </form>
-                      ) : (
-                        <button
-                          onClick={() => setNewEffect({ optionId: opt.id, type: "", key: "", value: "" })}
-                          className="mb-2 w-full rounded bg-slate-600 px-2 py-1 text-xs text-white hover:bg-slate-500"
-                        >
-                          + Efecto
-                        </button>
+                        </div>
                       )}
 
-                      <div className="space-y-1">
-                        {opt.effects?.map((eff) => (
-                          <div key={eff.id} className="flex items-center justify-between rounded bg-slate-600 p-2 text-xs">
-                            <span>
-                              {eff.type}: {eff.key} = {String(eff.value)}
-                            </span>
-                            <button
-                              onClick={() => handleDeleteEffect(eff.id!)}
-                              className="rounded bg-red-600 px-1 py-0.5 text-white hover:bg-red-700"
+                      <NextCardPreviewPanel card={optionPreview} label="Siguiente carta" />
+
+                      <div className="mt-3 rounded bg-slate-700 p-3">
+                        <p className="mb-2 text-sm font-semibold">Efectos</p>
+
+                        {newEffect?.optionIndex === optionIndex ? (
+                          <form onSubmit={(e) => addEffectDraft(e, optionIndex)} className="mb-2 space-y-2">
+                            <select
+                              value={newEffect.type}
+                              onChange={(e) => setNewEffect({ ...newEffect, type: e.target.value })}
+                              className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
                             >
-                              x
-                            </button>
-                          </div>
-                        ))}
+                              <option value="">Tipo efecto</option>
+                              <option value="modify_stat">Modify Stat</option>
+                              <option value="set_flag">Set Flag</option>
+                              <option value="add_item">Add Item</option>
+                              <option value="remove_item">Remove Item</option>
+                              <option value="modify_world_state">Modify World State</option>
+                            </select>
+                            <input
+                              type="text"
+                              placeholder="Key"
+                              value={newEffect.key}
+                              onChange={(e) => setNewEffect({ ...newEffect, key: e.target.value })}
+                              className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Value"
+                              value={newEffect.value}
+                              onChange={(e) => setNewEffect({ ...newEffect, value: e.target.value })}
+                              className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                            />
+                            <div className="flex gap-2">
+                              <button type="submit" className="flex-1 rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700">
+                                Agregar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setNewEffect(null)}
+                                className="flex-1 rounded bg-gray-600 px-2 py-1 text-xs text-white hover:bg-gray-700"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={!editingCard}
+                            onClick={() => setNewEffect({ optionIndex, type: "", key: "", value: "" })}
+                            className="mb-2 w-full rounded bg-slate-600 px-2 py-1 text-xs text-white hover:bg-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            + Efecto
+                          </button>
+                        )}
+
+                        <div className="space-y-1">
+                          {option.effects.map((effect, effectIndex) => (
+                            <div key={`${effect.id || "new-eff"}-${effectIndex}`} className="flex items-center justify-between rounded bg-slate-600 p-2 text-xs">
+                              <span>
+                                {effect.type}: {effect.key} = {effect.value}
+                              </span>
+                              <TrashButton
+                                onClick={() =>
+                                  requestDelete({
+                                    kind: "effect",
+                                    optionIndex,
+                                    effectIndex,
+                                  })
+                                }
+                                title="Eliminar efecto"
+                                disabled={!editingCard}
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </>
           )}
         </section>
       </div>
+
+      <div className="mt-8 flex justify-end gap-2">
+        {editingCard ? (
+          <>
+            <button
+              type="button"
+              onClick={handleEditToggle}
+              className="rounded border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-700"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveAllChanges()}
+              disabled={isSaving}
+              className="rounded border border-emerald-400/60 bg-emerald-600/20 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSaving ? "Guardando todo..." : "Guardar todo"}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={handleEditToggle}
+            className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            Editar
+          </button>
+        )}
+      </div>
+
+      <ConfirmModal
+        open={deleteModal.open}
+        title={
+          deleteModal.target?.kind === "condition"
+            ? "Quitar condicion"
+            : deleteModal.target?.kind === "option"
+              ? "Quitar opcion"
+              : "Quitar efecto"
+        }
+        message={
+          deleteModal.target?.kind === "condition"
+            ? "Se quitara la condicion del borrador actual. Se aplicara al guardar."
+            : deleteModal.target?.kind === "option"
+              ? "Se quitara la opcion (y sus efectos) del borrador actual. Se aplicara al guardar."
+              : "Se quitara el efecto del borrador actual. Se aplicara al guardar."
+        }
+        confirmLabel="Quitar"
+        onConfirm={confirmDeleteInDraft}
+        onCancel={() => setDeleteModal({ open: false, target: null })}
+      />
     </div>
   )
 }

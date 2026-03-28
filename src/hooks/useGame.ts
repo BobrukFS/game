@@ -4,7 +4,7 @@
 
 import { useState } from "react"
 import { GameState, Card, Option } from "@/lib/domain"
-import { drawCard, applyOption } from "@/lib/engine/gameEngine"
+import { drawCardWithState, applyOption } from "@/lib/engine/gameEngine"
 import { cards } from "@/lib/data/cards"
 
 export function useGame() {
@@ -20,22 +20,26 @@ export function useGame() {
       day: 1,
       phase: "day"
     },
+    interactions: {
+      total: 0,
+      counters: {},
+    },
     history: []
   })
 
   const [currentCard, setCurrentCard] = useState<Card | null>(null)
 
   function startGame() {
-    const card = drawCard(cards, state)
-    setCurrentCard(card)
+    const result = drawCardWithState(cards, state)
+    setState(result.state)
+    setCurrentCard(result.card)
   }
 
   function chooseOption(option: Option) {
     const newState = applyOption(option, state)
-    setState(newState)
-
-    const nextCard = drawCard(cards, newState)
-    setCurrentCard(nextCard)
+    const result = drawCardWithState(cards, newState)
+    setState(result.state)
+    setCurrentCard(result.card)
   }
 
   return {

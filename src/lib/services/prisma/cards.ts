@@ -9,14 +9,49 @@ export interface CardWithRelations {
   priority: number
   tags: string[]
   createdAt: Date
-  conditions: any[]
-  options: any[]
+  conditions: {
+    id: string
+    cardId: string
+    type: string
+    key: string
+    value: string
+  }[]
+  options: {
+    id: string
+    cardId: string
+    text: string
+    order: number
+    nextCardId: string | null
+  }[]
 }
 
 export async function getCardsByDeckId(deckId: string) {
   return prisma.card.findMany({
     where: { deckId },
-    orderBy: { id: "asc" },
+    include: {
+      options: {
+        select: {
+          id: true,
+          cardId: true,
+          text: true,
+          order: true,
+          nextCardId: true,
+        },
+        orderBy: {
+          order: "asc",
+        },
+      },
+      conditions: {
+        select: {
+          id: true,
+          cardId: true,
+          type: true,
+          key: true,
+          value: true,
+        },
+      },
+    },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
 }
 
