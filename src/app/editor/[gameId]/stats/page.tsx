@@ -13,6 +13,7 @@ import {
   deleteWorldState,
 } from "@/app/actions"
 import { Stat } from "@/lib/domain"
+import PathTrail from "@/components/editor/PathTrail"
 
 type WorldStateItem = {
   id: string
@@ -253,6 +254,12 @@ export default function StatsPage() {
   return (
     <div className="max-w-5xl p-8 space-y-10">
       <div>
+        <PathTrail
+          items={[
+            { label: "Editor", href: "/editor" },
+            { label: "Variables" },
+          ]}
+        />
         <h1 className="text-3xl font-bold">Variables del Juego</h1>
         <p className="text-slate-400 mt-2">Stats y World State se gestionan por separado y sin valores por defecto.</p>
       </div>

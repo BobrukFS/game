@@ -23,6 +23,7 @@ import type { ConditionType } from "@/lib/domain"
 import type { CardWithRelations } from "@/lib/services/prisma/cards"
 import type { OptionWithEffects } from "@/lib/services/prisma/options"
 import ConfirmModal from "@/components/editor/ConfirmModal"
+import PathTrail from "@/components/editor/PathTrail"
 
 type CardType = "decision" | "narrative" | "interactive"
 
@@ -84,31 +85,6 @@ function TrashButton({
         <path d="M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6" />
         <path d="M10 11v6" />
         <path d="M14 11v6" />
-      </svg>
-    </button>
-  )
-}
-
-function PencilButton({
-  onClick,
-  title,
-  disabled,
-}: {
-  onClick: () => void
-  title: string
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className="rounded-md border border-amber-400/50 p-1.5 text-amber-300 transition-colors hover:bg-amber-600/20 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path d="M4 20h4l10-10-4-4L4 16v4Z" />
-        <path d="m12 6 4 4" />
       </svg>
     </button>
   )
@@ -196,7 +172,7 @@ export default function CardPage() {
   })
   const [newOption, setNewOption] = useState({ text: "", nextCardId: "" })
 
-  const [editingOptionIndex, setEditingOptionIndex] = useState<number | null>(null)
+  const [expandedOptionIndexes, setExpandedOptionIndexes] = useState<number[]>([])
 
   const [newEffect, setNewEffect] = useState<{ optionIndex: number; type: string; key: string; value: string } | null>(
     null
@@ -309,7 +285,7 @@ export default function CardPage() {
     setNewCondition({ type: "", key: "", value: "" })
     setNewOption({ text: "", nextCardId: "" })
     setNewEffect(null)
-    setEditingOptionIndex(null)
+    setExpandedOptionIndexes([])
 
     if (card) {
       setCardForm({
@@ -391,11 +367,12 @@ export default function CardPage() {
   function addOptionDraft(e: React.FormEvent) {
     e.preventDefault()
     if (!editingCard) return
-    if (cardForm.type !== "decision") return
-    if (draftOptions.length >= 2) return
+    if (cardForm.type === "interactive") return
+    if (cardForm.type === "decision" && draftOptions.length >= 2) return
+    if (cardForm.type === "narrative" && draftOptions.length >= 1) return
 
-    const text = newOption.text.trim()
-    if (!text) return
+    const text = cardForm.type === "decision" ? newOption.text.trim() : "Continuar"
+    if (cardForm.type === "decision" && !text) return
 
     setDraftOptions((prev) => [
       ...prev,
@@ -445,7 +422,8 @@ export default function CardPage() {
 
     if (cardForm.type === "interactive") return
 
-    if (cardForm.type === "narrative" && draftOptions.length > 0) return
+    if (cardForm.type === "decision" && draftOptions.length > 2) return
+    if (cardForm.type === "narrative" && draftOptions.length > 1) return
 
     try {
       setIsSaving(true)
@@ -498,7 +476,7 @@ export default function CardPage() {
 
         let optionId = optionDraft.id
         const optionPayload = {
-          text: optionDraft.text.trim(),
+          text: (cardForm.type === "narrative" ? "Continuar" : optionDraft.text).trim(),
           order: optionIndex + 1,
           nextCardId: optionDraft.nextCardId.trim() || null,
         }
@@ -565,6 +543,15 @@ export default function CardPage() {
   return (
     <div className="max-w-6xl p-8">
       <section className="mb-8">
+        <PathTrail
+          items={[
+            { label: "Editor", href: "/editor" },
+            { label: "Decks", href: `/editor/${gameId}` },
+            { label: "Cartas", href: `/editor/${gameId}/decks/${card.deckId}` },
+            { label: card.title },
+          ]}
+          maxVisible={5}
+        />
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-4xl font-bold">{cardForm.title || card.title}</h1>
           {!editingCard && (
@@ -646,6 +633,18 @@ export default function CardPage() {
               <span>Tipo: {cardForm.type || card.type}</span>
               <span>Conexiones: {draftOptions.length}</span>
             </div>
+            {card.tags.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {card.tags.map((tag) => (
+                  <span
+                    key={`${card.id}-${tag}`}
+                    className="rounded-full border border-slate-600 bg-slate-700/60 px-2 py-1 text-xs text-slate-200"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -757,28 +756,32 @@ export default function CardPage() {
         <section>
           <h2 className="mb-4 text-2xl font-bold">Opciones</h2>
 
-          {cardForm.type !== "decision" ? (
+          {cardForm.type === "interactive" ? (
             <div className="rounded bg-slate-800 p-4 text-sm text-slate-300">
-              Esta carta es {cardForm.type}. Solo las cartas decision tienen opciones y efectos.
+              Esta carta es interactiva. La edicion de opciones y efectos no esta habilitada.
             </div>
           ) : (
             <>
-              {draftOptions.length < 2 ? (
+              {(cardForm.type === "narrative" ? draftOptions.length < 1 : draftOptions.length < 2) ? (
                 <form onSubmit={addOptionDraft} className="mb-4 rounded bg-slate-800 p-4">
-                  <label htmlFor="new-option-text" className="mb-1 block text-xs font-semibold text-slate-300">
-                    Texto de la opcion
-                  </label>
-                  <input
-                    id="new-option-text"
-                    type="text"
-                    value={newOption.text}
-                    onChange={(e) => setNewOption((prev) => ({ ...prev, text: e.target.value }))}
-                    disabled={!editingCard}
-                    className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
-                  />
+                  {cardForm.type === "decision" && (
+                    <>
+                      <label htmlFor="new-option-text" className="mb-1 block text-xs font-semibold text-slate-300">
+                        Texto de la opcion
+                      </label>
+                      <input
+                        id="new-option-text"
+                        type="text"
+                        value={newOption.text}
+                        onChange={(e) => setNewOption((prev) => ({ ...prev, text: e.target.value }))}
+                        disabled={!editingCard}
+                        className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+                      />
+                    </>
+                  )}
 
                   <label htmlFor="new-option-next-card" className="mb-1 block text-xs font-semibold text-slate-300">
-                    Siguiente carta
+                    {cardForm.type === "narrative" ? "Siguiente carta (opcional)" : "Siguiente carta"}
                   </label>
                   <select
                     id="new-option-next-card"
@@ -802,55 +805,66 @@ export default function CardPage() {
                     disabled={!editingCard}
                     className="mt-3 w-full rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Agregar opcion
+                    {cardForm.type === "narrative" ? "Guardar conexion narrativa" : "Agregar opcion"}
                   </button>
                 </form>
               ) : (
                 <p className="mb-4 rounded border border-slate-700 bg-slate-800 p-3 text-sm text-slate-300">
-                  Esta carta ya tiene 2 opciones. Elimina una para poder agregar otra.
+                  {cardForm.type === "narrative"
+                    ? "Esta carta narrativa ya tiene una conexion. Eliminala para cambiarla."
+                    : "Esta carta ya tiene 2 opciones. Elimina una para poder agregar otra."}
                 </p>
               )}
 
               <div className="space-y-4">
                 {draftOptions.map((option, optionIndex) => {
-                  const isEditingOption = editingOptionIndex === optionIndex
+                  const isExpanded = expandedOptionIndexes.includes(optionIndex)
                   const optionPreview = option.nextCardId ? nextCardMap.get(option.nextCardId) || null : null
 
                   return (
                     <div key={`${option.id || "new-option"}-${optionIndex}`} className="rounded border border-slate-700 bg-slate-800 p-4">
                       <div className="mb-3 flex items-start justify-between gap-2">
-                        {isEditingOption ? (
-                          <input
-                            value={option.text}
-                            onChange={(e) => updateOptionDraft(optionIndex, { text: e.target.value })}
-                            className="w-full rounded bg-slate-700 px-2 py-1 text-sm text-white"
-                          />
-                        ) : (
-                          <p className="font-semibold">{option.text}</p>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedOptionIndexes((prev) =>
+                              prev.includes(optionIndex)
+                                ? prev.filter((idx) => idx !== optionIndex)
+                                : [...prev, optionIndex]
+                            )
+                          }
+                          className="flex flex-1 items-center justify-between rounded border border-slate-600 bg-slate-700/70 px-3 py-2 text-left text-sm font-semibold text-slate-100"
+                        >
+                          <span>{cardForm.type === "narrative" ? "Conexion narrativa" : option.text || "Opcion sin texto"}</span>
+                          <span className="text-xs text-slate-300">{isExpanded ? "Ocultar" : "Abrir"}</span>
+                        </button>
 
-                        <div className="flex items-center gap-2">
-                          <PencilButton
-                            onClick={() => setEditingOptionIndex((prev) => (prev === optionIndex ? null : optionIndex))}
-                            title={isEditingOption ? "Cerrar edicion" : "Editar opcion"}
-                            disabled={!editingCard}
-                          />
-                          <TrashButton
-                            onClick={() =>
-                              requestDelete(
-                                option.id
-                                  ? { kind: "option", id: option.id }
-                                  : { kind: "option", index: optionIndex }
-                              )
-                            }
-                            title="Eliminar opcion"
-                            disabled={!editingCard}
-                          />
-                        </div>
+                        <TrashButton
+                          onClick={() =>
+                            requestDelete(
+                              option.id
+                                ? { kind: "option", id: option.id }
+                                : { kind: "option", index: optionIndex }
+                            )
+                          }
+                          title="Eliminar opcion"
+                          disabled={!editingCard}
+                        />
                       </div>
 
-                      {isEditingOption && (
+                      {isExpanded && (
                         <div className="mb-3">
+                          {cardForm.type === "decision" && (
+                            <>
+                              <label className="mb-1 block text-xs font-semibold text-slate-300">Texto de opcion</label>
+                              <input
+                                value={option.text}
+                                onChange={(e) => updateOptionDraft(optionIndex, { text: e.target.value })}
+                                className="mb-2 w-full rounded bg-slate-700 px-2 py-1 text-sm text-white"
+                              />
+                            </>
+                          )}
+
                           <label className="mb-1 block text-xs font-semibold text-slate-300">Siguiente carta</label>
                           <select
                             value={option.nextCardId}
@@ -973,15 +987,7 @@ export default function CardPage() {
               {isSaving ? "Guardando todo..." : "Guardar todo"}
             </button>
           </>
-        ) : (
-          <button
-            type="button"
-            onClick={handleEditToggle}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            Editar
-          </button>
-        )}
+        ) : null}
       </div>
 
       <ConfirmModal

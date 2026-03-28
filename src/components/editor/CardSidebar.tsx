@@ -4,24 +4,22 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect, useState } from "react"
 
-export default function DeckSidebar({
+export default function CardSidebar({
+  gameId,
+  cardId,
   gameName,
-  deckName,
-  backHref,
-  cardsHref,
-  settingsHref,
+  cardTitle,
 }: {
+  gameId: string
+  cardId: string
   gameName: string
-  deckName: string
-  backHref: string
-  cardsHref: string
-  settingsHref: string
+  cardTitle: string
 }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("deck-sidebar-collapsed")
+    const stored = window.localStorage.getItem("card-sidebar-collapsed")
     if (stored === "1") {
       setCollapsed(true)
     }
@@ -30,15 +28,16 @@ export default function DeckSidebar({
   function toggleSidebar() {
     setCollapsed((prev) => {
       const next = !prev
-      window.localStorage.setItem("deck-sidebar-collapsed", next ? "1" : "0")
+      window.localStorage.setItem("card-sidebar-collapsed", next ? "1" : "0")
       return next
     })
   }
 
+  const cardEditHref = `/editor/${gameId}/cards/${cardId}`
+  const cardSettingsHref = `/editor/${gameId}/cards/${cardId}/settings`
+
   return (
-    <aside
-      className={`${collapsed ? "w-16" : "w-64"} border-r border-slate-700 bg-slate-800 p-3 overflow-auto transition-all duration-200`}
-    >
+    <aside className={`${collapsed ? "w-16" : "w-64"} border-r border-slate-700 bg-slate-800 p-3 overflow-auto transition-all duration-200`}>
       <button
         type="button"
         onClick={toggleSidebar}
@@ -56,43 +55,40 @@ export default function DeckSidebar({
       </button>
 
       <Link
-        href={backHref}
+        href={`/editor/${gameId}`}
         className="mb-4 flex items-center gap-2 rounded-md px-2 py-2 text-sm text-slate-300 hover:bg-slate-700/60 hover:text-white"
       >
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
           <path d="m15 6-6 6 6 6" />
         </svg>
-        {!collapsed && "Volver a Decks"}
+        {!collapsed && "Volver"}
       </Link>
 
       {!collapsed && (
         <>
           <h3 className="mb-1 text-xs text-slate-500">Juego</h3>
           <p className="mb-4 font-semibold">{gameName}</p>
-          <h3 className="mb-1 text-xs text-slate-500">Deck</h3>
-          <h2 className="mb-4 text-xl font-bold">{deckName}</h2>
+          <h3 className="mb-1 text-xs text-slate-500">Carta</h3>
+          <h2 className="mb-4 text-lg font-bold truncate" title={cardTitle}>{cardTitle}</h2>
         </>
       )}
 
       <nav className="space-y-1 text-sm">
         <Link
-          href={cardsHref}
-          className={`flex items-center gap-2 rounded px-4 py-2 ${
-            pathname === cardsHref ? "bg-slate-700 text-white" : "hover:bg-slate-700"
-          }`}
-          title="Cartas"
+          href={cardEditHref}
+          className={`flex items-center gap-2 rounded px-4 py-2 ${pathname === cardEditHref ? "bg-slate-700 text-white" : "hover:bg-slate-700"}`}
+          title="Editar"
         >
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <rect x="4" y="6" width="16" height="12" rx="2" />
-            <path d="M8 10h8" />
+            <path d="M4 20h4l10-10-4-4L4 16v4Z" />
+            <path d="m12 6 4 4" />
           </svg>
-          {!collapsed && "Cartas"}
+          {!collapsed && "Editar"}
         </Link>
+
         <Link
-          href={settingsHref}
-          className={`flex items-center gap-2 rounded px-4 py-2 ${
-            pathname === settingsHref ? "bg-slate-700 text-white" : "hover:bg-slate-700"
-          }`}
+          href={cardSettingsHref}
+          className={`flex items-center gap-2 rounded px-4 py-2 ${pathname === cardSettingsHref ? "bg-slate-700 text-white" : "hover:bg-slate-700"}`}
           title="Configuracion"
         >
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">

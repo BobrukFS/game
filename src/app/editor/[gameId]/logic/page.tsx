@@ -20,6 +20,7 @@ import {
   SelectionWeightRule,
   SelectionWeightTargetType,
 } from "@/lib/domain"
+import PathTrail from "@/components/editor/PathTrail"
 
 type DeckWeightRow = {
   id: string
@@ -572,6 +573,12 @@ export default function LogicPage() {
   return (
     <div className="max-w-5xl p-8 space-y-8">
       <div>
+        <PathTrail
+          items={[
+            { label: "Editor", href: "/editor" },
+            { label: "Game Logic" },
+          ]}
+        />
         <h1 className="text-3xl font-bold">Game Logic</h1>
         <p className="mt-2 text-slate-400">
           Define contadores y reglas orientadas a eventos. El codigo no depende de stats o world state fijos por juego.
@@ -632,7 +639,7 @@ export default function LogicPage() {
                 }`}
               >
                 <span>{row.deck.name} ({row.deck.type})</span>
-                <span>base: {row.deck.weight} -> efectivo: {row.effectiveWeight} · {chance}%</span>
+                <span>base: {row.deck.weight} {"->"} efectivo: {row.effectiveWeight} · {chance}%</span>
               </div>
             )
           })}

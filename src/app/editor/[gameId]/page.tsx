@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { fetchDecksByGameId, createDeck } from "@/app/actions"
+import PathTrail from "@/components/editor/PathTrail"
 
 type DeckListItem = {
   id: string
@@ -103,6 +104,12 @@ export default function GamePage() {
 
   return (
     <div className="p-8">
+      <PathTrail
+        items={[
+          { label: "Editor", href: "/editor" },
+          { label: "Decks" },
+        ]}
+      />
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-4xl font-bold">Decks</h1>
         <button
@@ -114,90 +121,117 @@ export default function GamePage() {
       </div>
 
       {showForm && (
-        <form onSubmit={handleCreateDeck} className="mb-8 bg-slate-800 p-6 rounded">
-          <div className="mb-4">
-            <label htmlFor="deck-name" className="mb-2 block text-sm font-semibold text-slate-200">
-              Nombre
-            </label>
-            <input
-              id="deck-name"
-              type="text"
-              placeholder="Nombre"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
-              required
-            />
-          </div>
-          {deckTypes.length === 0 ? (
-            <div className="mb-4">
-              <label htmlFor="deck-type" className="mb-2 block text-sm font-semibold text-slate-200">
-                Tipo
-              </label>
-              <input
-                id="deck-type"
-                type="text"
-                placeholder="Tipo (ej: story, shop, global)"
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
-                required
-              />
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-lg border border-slate-700 bg-slate-800 p-6 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">Nuevo deck</h2>
+                <p className="text-sm text-slate-400">Completa los datos para crear el deck</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700"
+              >
+                Cerrar
+              </button>
             </div>
-          ) : (
-            <div className="mb-4">
-              <label htmlFor="deck-type" className="mb-2 block text-sm font-semibold text-slate-200">
-                Tipo
-              </label>
-              <input
-                id="deck-type"
-                type="text"
-                list="deck-type-options"
-                placeholder="Tipo"
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
-                required
-              />
-              <datalist id="deck-type-options">
-                {deckTypes.map((type) => (
-                  <option key={type} value={type} />
-                ))}
-              </datalist>
-            </div>
-          )}
-          <div className="mb-4">
-            <label htmlFor="deck-weight" className="mb-2 block text-sm font-semibold text-slate-200">
-              Peso del deck
-            </label>
-            <input
-              id="deck-weight"
-              type="number"
-              min={1}
-              step={1}
-              value={formData.weight}
-              onChange={(e) => setFormData({ ...formData, weight: Number(e.target.value) })}
-              className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
-              required
-            />
+
+            <form onSubmit={handleCreateDeck}>
+              <div className="mb-4">
+                <label htmlFor="deck-name" className="mb-2 block text-sm font-semibold text-slate-200">
+                  Nombre
+                </label>
+                <input
+                  id="deck-name"
+                  type="text"
+                  placeholder="Nombre"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
+                  required
+                />
+              </div>
+              {deckTypes.length === 0 ? (
+                <div className="mb-4">
+                  <label htmlFor="deck-type" className="mb-2 block text-sm font-semibold text-slate-200">
+                    Tipo
+                  </label>
+                  <input
+                    id="deck-type"
+                    type="text"
+                    placeholder="Tipo (ej: story, shop, global)"
+                    value={formData.type}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                    className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
+                    required
+                  />
+                </div>
+              ) : (
+                <div className="mb-4">
+                  <label htmlFor="deck-type" className="mb-2 block text-sm font-semibold text-slate-200">
+                    Tipo
+                  </label>
+                  <input
+                    id="deck-type"
+                    type="text"
+                    list="deck-type-options"
+                    placeholder="Tipo"
+                    value={formData.type}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                    className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
+                    required
+                  />
+                  <datalist id="deck-type-options">
+                    {deckTypes.map((type) => (
+                      <option key={type} value={type} />
+                    ))}
+                  </datalist>
+                </div>
+              )}
+              <div className="mb-4">
+                <label htmlFor="deck-weight" className="mb-2 block text-sm font-semibold text-slate-200">
+                  Peso del deck
+                </label>
+                <input
+                  id="deck-weight"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={formData.weight}
+                  onChange={(e) => setFormData({ ...formData, weight: Number(e.target.value) })}
+                  className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label htmlFor="deck-description" className="mb-2 block text-sm font-semibold text-slate-200">
+                  Descripcion
+                </label>
+                <textarea
+                  id="deck-description"
+                  placeholder="Descripcion"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
+                  rows={2}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="rounded border border-slate-600 px-4 py-2 text-slate-200 hover:bg-slate-700"
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-white">
+                  Crear
+                </button>
+              </div>
+            </form>
           </div>
-          <div className="mb-4">
-            <label htmlFor="deck-description" className="mb-2 block text-sm font-semibold text-slate-200">
-              Descripcion
-            </label>
-            <textarea
-              id="deck-description"
-              placeholder="Descripcion"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="w-full px-4 py-2 bg-slate-700 rounded text-white placeholder-slate-500"
-              rows={2}
-            />
-          </div>
-          <button type="submit" className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-white">
-            Crear
-          </button>
-        </form>
+        </div>
       )}
 
       <div className="mb-6 rounded border border-slate-700 bg-slate-800/60 p-4">

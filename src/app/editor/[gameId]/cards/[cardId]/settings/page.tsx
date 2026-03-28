@@ -1,17 +1,17 @@
-import { fetchGameById } from "@/app/actions"
-import DeleteGameCard from "@/components/editor/DeleteGameCard"
+import { fetchCardById } from "@/app/actions"
+import DeleteCardCard from "@/components/editor/DeleteCardCard"
 import PathTrail from "@/components/editor/PathTrail"
 
-export default async function GameSettingsPage({
+export default async function CardSettingsPage({
   params,
 }: {
-  params: Promise<{ gameId: string }>
+  params: Promise<{ gameId: string; cardId: string }>
 }) {
-  const { gameId } = await params
-  const game = await fetchGameById(gameId)
+  const { gameId, cardId } = await params
+  const card = await fetchCardById(cardId)
 
-  if (!game) {
-    return <div className="p-8">Juego no encontrado</div>
+  if (!card) {
+    return <div className="p-8">Carta no encontrada</div>
   }
 
   return (
@@ -21,13 +21,15 @@ export default async function GameSettingsPage({
           <PathTrail
             items={[
               { label: "Editor", href: "/editor" },
-              { label: "Configuracion de juego" },
+              { label: "Decks", href: `/editor/${gameId}` },
+              { label: "Cartas", href: `/editor/${gameId}/decks/${card.deckId}` },
+              { label: card.title, href: `/editor/${gameId}/cards/${card.id}` },
+              { label: "Configuracion" },
             ]}
+            maxVisible={5}
           />
           <h1 className="text-2xl font-semibold">Configuracion</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Ajustes del juego con estilo limpio inspirado en GitHub.
-          </p>
+          <p className="mt-1 text-sm text-slate-400">Ajustes de la carta.</p>
         </header>
 
         <section className="rounded-lg border border-slate-700 bg-slate-800/70">
@@ -36,33 +38,32 @@ export default async function GameSettingsPage({
           </div>
           <div className="space-y-4 px-5 py-5">
             <div>
-              <label htmlFor="game-name" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Nombre
+              <label htmlFor="card-title" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Titulo
               </label>
               <input
-                id="game-name"
-                value={game.name}
+                id="card-title"
+                value={card.title}
                 disabled
                 className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200"
               />
             </div>
 
             <div>
-              <label htmlFor="game-description" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Descripcion
+              <label htmlFor="card-type" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Tipo
               </label>
-              <textarea
-                id="game-description"
-                value={game.description || "Sin descripcion"}
+              <input
+                id="card-type"
+                value={card.type}
                 disabled
-                rows={4}
                 className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200"
               />
             </div>
           </div>
         </section>
 
-        <DeleteGameCard gameId={gameId} />
+        <DeleteCardCard gameId={gameId} deckId={card.deckId} cardId={card.id} />
       </div>
     </div>
   )
