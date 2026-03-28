@@ -66,7 +66,7 @@ model Card {
   title       String
   type        String      @default("narrative")
   description String      @default("")
-  priority    Int         @default(0)
+  priority    Int?
   tags        String[]    @default([])
   createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   

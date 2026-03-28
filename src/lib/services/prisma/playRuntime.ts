@@ -55,7 +55,7 @@ export interface PlayRuntimeCard {
   title: string
   type: string
   description: string
-  priority: number
+  priority: number | null
   tags: string[]
   conditions: PlayRuntimeCondition[]
   options: PlayRuntimeOption[]

@@ -108,7 +108,7 @@ type NextCardPreview = {
   title: string
   description: string
   type: string
-  priority: number
+  priority: number | null
 }
 
 function TrashButton({
@@ -153,7 +153,7 @@ function NextCardPreviewPanel({
       <p className="mb-2 text-xs uppercase tracking-wider text-slate-500">{label}</p>
       <p className="text-sm font-semibold text-slate-100">{card.title}</p>
       <p className="mt-1 text-xs text-slate-400">
-        Tipo: {card.type} · Nivel sugerido: {card.priority}
+        Tipo: {card.type} · Nivel sugerido: {card.priority ?? "Sin prioridad"}
       </p>
       <p className="mt-2 line-clamp-2 text-xs text-slate-300">
         {card.description || "Sin descripcion"}

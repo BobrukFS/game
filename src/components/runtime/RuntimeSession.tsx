@@ -328,7 +328,7 @@ export default function RuntimeSession({ bundle, mode }: RuntimeSessionProps) {
 
                 <div className="mb-3 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-slate-600">
                   <span>{currentCard.type}</span>
-                  <span>Prioridad {currentCard.priority}</span>
+                  <span>Prioridad {currentCard.priority ?? "-"}</span>
                 </div>
 
                 <h3 className="text-2xl font-bold leading-tight">{currentCard.title}</h3>
@@ -479,7 +479,7 @@ export default function RuntimeSession({ bundle, mode }: RuntimeSessionProps) {
 
               <div className="mb-3 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-slate-600">
                 <span>{currentCard.type}</span>
-                <span>Prioridad {currentCard.priority}</span>
+                <span>Prioridad {currentCard.priority ?? "-"}</span>
               </div>
 
               <h3 className="text-2xl font-bold leading-tight">{currentCard.title}</h3>

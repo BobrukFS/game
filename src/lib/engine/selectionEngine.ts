@@ -45,6 +45,12 @@ interface SelectionCandidateContext {
   card?: PlayRuntimeCard
 }
 
+function normalizeCardPriority(priority: number | null | undefined) {
+  return typeof priority === "number" && Number.isFinite(priority)
+    ? priority
+    : Number.POSITIVE_INFINITY
+}
+
 export interface DrawResult {
   state: GameState
   card: PlayRuntimeCard | null
@@ -175,7 +181,7 @@ function getSelectionConditionActualValue(
     if (condition.key === "id") return card.id
     if (condition.key === "type") return card.type
     if (condition.key === "title") return card.title
-    if (condition.key === "priority") return card.priority
+    if (condition.key === "priority") return typeof card.priority === "number" ? card.priority : ""
     if (condition.key === "deckId") return card.deckId
     return ""
   }
@@ -607,6 +613,49 @@ function getSeenCardsByDeckMap(bundle: PlayRuntimeBundle, state: GameState) {
   return seen
 }
 
+function buildDeckIncomingLinks(bundle: PlayRuntimeBundle) {
+  const incomingByCard = new Map<string, Set<string>>()
+  const cardsById = new Map(bundle.cards.map((card) => [card.id, card]))
+
+  for (const card of bundle.cards) {
+    for (const option of card.options || []) {
+      if (!option.nextCardId) continue
+      const nextCard = cardsById.get(option.nextCardId)
+      if (!nextCard) continue
+
+      // Level progression is enforced only within the same deck.
+      if (nextCard.deckId !== card.deckId) continue
+
+      if (!incomingByCard.has(nextCard.id)) {
+        incomingByCard.set(nextCard.id, new Set())
+      }
+      incomingByCard.get(nextCard.id)?.add(card.id)
+    }
+  }
+
+  return incomingByCard
+}
+
+function isCardUnlockedByDeckProgress(
+  card: PlayRuntimeCard,
+  incomingByCard: Map<string, Set<string>>,
+  seenByDeck: Map<string, Set<string>>
+) {
+  const prerequisites = incomingByCard.get(card.id)
+  if (!prerequisites || prerequisites.size === 0) {
+    return true
+  }
+
+  const seenInDeck = seenByDeck.get(card.deckId) || new Set<string>()
+  for (const predecessorId of prerequisites) {
+    if (seenInDeck.has(predecessorId)) {
+      return true
+    }
+  }
+
+  return false
+}
+
 /**
  * Keep no-repeat behavior per deck, but gracefully fallback when deck is exhausted
  */
@@ -627,7 +676,7 @@ function filterNoRepeatCardsPerDeck(
   for (const [deckId, deckCards] of cardsByDeck.entries()) {
     const seenSet = seenByDeck.get(deckId) || new Set<string>()
     const unseen = deckCards.filter((card) => !seenSet.has(card.id))
-    selected.push(...(unseen.length > 0 ? unseen : deckCards))
+    selected.push(...unseen)
   }
 
   return selected
@@ -656,10 +705,12 @@ function getFrontierCardsByDeck(cards: PlayRuntimeCard[]) {
 
     let minPriority = Number.POSITIVE_INFINITY
     for (const card of deckCards) {
-      minPriority = Math.min(minPriority, card.priority)
+      minPriority = Math.min(minPriority, normalizeCardPriority(card.priority))
     }
 
-    const topPriorityCards = deckCards.filter((card) => card.priority === minPriority)
+    const topPriorityCards = deckCards.filter(
+      (card) => normalizeCardPriority(card.priority) === minPriority
+    )
     const picked = pickRandomCard(topPriorityCards)
     if (picked) frontier.push(picked)
   }
@@ -677,10 +728,12 @@ function selectCardFromFrontierByPriorityAndWeight(
 
   let minPriority = Number.POSITIVE_INFINITY
   for (const card of cards) {
-    minPriority = Math.min(minPriority, card.priority)
+    minPriority = Math.min(minPriority, normalizeCardPriority(card.priority))
   }
 
-  const priorityCandidates = cards.filter((card) => card.priority === minPriority)
+  const priorityCandidates = cards.filter(
+    (card) => normalizeCardPriority(card.priority) === minPriority
+  )
 
   let maxWeight = Number.NEGATIVE_INFINITY
   const weighted = priorityCandidates.map((card) => {
@@ -709,7 +762,7 @@ function sortByPriorityThenWeight(
   const scored = cards.map((card) => {
     const deck = decksById.get(card.deckId)
     const weight = deck ? getEffectiveCardWeight(deck, card, state, logicConfig) : 1
-    return { card, weight, priority: card.priority }
+    return { card, weight, priority: normalizeCardPriority(card.priority) }
   })
 
   scored.sort((a, b) => {
@@ -782,6 +835,7 @@ export function drawNextCard(
     .filter((deck) => areDeckConditionsMet(deck, state))
     .map((deck) => deck.id)
   const seenByDeck = getSeenCardsByDeckMap(bundle, state)
+  const incomingByCard = buildDeckIncomingLinks(bundle)
   const stateWithTracking = withSelectionTracking(state, enabledDeckIds)
 
   const debugEntries = bundle.cards.map((card) => {
@@ -894,6 +948,7 @@ export function drawNextCard(
     .filter((entry) => entry.valid)
     .map((entry) => bundle.cards.find((card) => card.id === entry.cardId))
     .filter((card): card is PlayRuntimeCard => !!card)
+    .filter((card) => isCardUnlockedByDeckProgress(card, incomingByCard, seenByDeck))
 
   // Filter cards from completed non-repeatable decks
   let cardsFromRepeatableDecks = validCards.filter((card) => {

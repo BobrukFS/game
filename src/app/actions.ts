@@ -464,7 +464,7 @@ export async function createCard(data: {
   title: string
   type: string
   description?: string
-  priority?: number
+  priority?: number | null
   tags?: string[]
 }) {
   const payload = {
@@ -473,8 +473,8 @@ export async function createCard(data: {
     type: validateCardType(data.type),
     description: normalizeOptionalText(data.description),
     priority:
-      typeof data.priority === "undefined"
-        ? 0
+      typeof data.priority === "undefined" || data.priority === null
+        ? null
         : requireInteger(data.priority, "Prioridad", -999, 999),
     tags: (data.tags || []).map((t) => t.trim()).filter(Boolean),
   }
@@ -490,7 +490,7 @@ export async function updateCard(
     title?: string
     type?: string
     description?: string
-    priority?: number
+    priority?: number | null
     tags?: string[]
   }
 ) {
@@ -498,7 +498,7 @@ export async function updateCard(
     title?: string
     type?: string
     description?: string
-    priority?: number
+    priority?: number | null
     tags?: string[]
   } = {}
 
@@ -515,7 +515,10 @@ export async function updateCard(
   }
 
   if (typeof updates.priority !== "undefined") {
-    normalizedUpdates.priority = requireInteger(updates.priority, "Prioridad", -999, 999)
+    normalizedUpdates.priority =
+      updates.priority === null
+        ? null
+        : requireInteger(updates.priority, "Prioridad", -999, 999)
   }
 
   if (Array.isArray(updates.tags)) {

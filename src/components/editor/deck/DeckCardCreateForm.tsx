@@ -8,7 +8,7 @@ type CreateCardFormState = {
   title: string
   description: string
   type: DeckCardType
-  priority: number
+  priority: string
   tags: string
   decisionOptionA: string
   decisionOptionB: string
@@ -18,7 +18,7 @@ const INITIAL_FORM: CreateCardFormState = {
   title: "",
   description: "",
   type: "narrative",
-  priority: 0,
+  priority: "",
   tags: "",
   decisionOptionA: "",
   decisionOptionB: "",
@@ -39,8 +39,13 @@ export default function DeckCardCreateForm({
     e.preventDefault()
 
     const title = formData.title.trim()
-    if (!title || !Number.isInteger(formData.priority)) return
+    if (!title) return
     if (formData.type === "interactive") return
+
+    const normalizedPriority = formData.priority.trim()
+    if (normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
+      return
+    }
 
     const optionA = formData.decisionOptionA.trim()
     const optionB = formData.decisionOptionB.trim()
@@ -55,7 +60,7 @@ export default function DeckCardCreateForm({
         title,
         type: formData.type,
         description: formData.description.trim(),
-        priority: formData.priority,
+        priority: normalizedPriority === "" ? undefined : Number(normalizedPriority),
         tags: formData.tags
           .split(",")
           .map((tag) => tag.trim())
@@ -177,9 +182,9 @@ export default function DeckCardCreateForm({
               id="card-priority"
               type="number"
               value={formData.priority}
-              onChange={(e) => setFormData((prev) => ({ ...prev, priority: Number(e.target.value) }))}
+              onChange={(e) => setFormData((prev) => ({ ...prev, priority: e.target.value }))}
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-              required
+              placeholder="Sin prioridad"
             />
           </div>
 

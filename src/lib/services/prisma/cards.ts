@@ -6,7 +6,7 @@ export interface CardWithRelations {
   title: string
   type: string
   description: string
-  priority: number
+  priority: number | null
   tags: string[]
   createdAt: Date
   conditions: {
@@ -84,7 +84,7 @@ export async function createCard(data: {
   title: string;
   type: string;
   description?: string;
-  priority?: number;
+  priority?: number | null;
   tags?: string[];
 }) {
   return prisma.card.create({
@@ -93,7 +93,7 @@ export async function createCard(data: {
       title: data.title,
       type: data.type,
       description: data.description || "",
-      priority: data.priority || 0,
+      priority: typeof data.priority === "number" ? data.priority : null,
       tags: data.tags || [],
     },
   });
@@ -105,7 +105,7 @@ export async function updateCard(
     title: string;
     type: string;
     description: string;
-    priority: number;
+    priority: number | null;
     tags: string[];
   }>
 ) {
