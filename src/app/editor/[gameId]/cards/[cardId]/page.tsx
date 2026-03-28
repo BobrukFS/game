@@ -286,6 +286,7 @@ export default function CardPage() {
     type: "narrative" as CardType,
     description: "",
     priority: "",
+    priorityDisabled: true,
     tags: "",
   })
 
@@ -416,6 +417,7 @@ export default function CardPage() {
           typeof cardData.priority === "number" && Number.isFinite(cardData.priority)
             ? String(cardData.priority)
             : "",
+        priorityDisabled: typeof cardData.priority !== "number" || !Number.isFinite(cardData.priority),
         tags: cardData.tags.join(", "),
       })
 
@@ -462,6 +464,7 @@ export default function CardPage() {
           typeof card.priority === "number" && Number.isFinite(card.priority)
             ? String(card.priority)
             : "",
+        priorityDisabled: typeof card.priority !== "number" || !Number.isFinite(card.priority),
         tags: card.tags.join(", "),
       })
     }
@@ -618,7 +621,7 @@ export default function CardPage() {
     const title = cardForm.title.trim()
     if (!title) return
     const normalizedPriority = cardForm.priority.trim()
-    if (normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
+    if (!cardForm.priorityDisabled && normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
       return
     }
 
@@ -629,7 +632,10 @@ export default function CardPage() {
         title,
         type: cardForm.type,
         description: cardForm.description.trim(),
-        priority: normalizedPriority === "" ? null : Number(normalizedPriority),
+        priority:
+          cardForm.priorityDisabled || normalizedPriority === ""
+            ? null
+            : Number(normalizedPriority),
         tags: cardForm.tags
           .split(",")
           .map((tag) => tag.trim())
@@ -651,7 +657,7 @@ export default function CardPage() {
     const title = cardForm.title.trim()
     if (!title) return
     const normalizedPriority = cardForm.priority.trim()
-    if (normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
+    if (!cardForm.priorityDisabled && normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
       return
     }
 
@@ -667,7 +673,10 @@ export default function CardPage() {
         title,
         type: cardForm.type,
         description: cardForm.description.trim(),
-        priority: normalizedPriority === "" ? null : Number(normalizedPriority),
+        priority:
+          cardForm.priorityDisabled || normalizedPriority === ""
+            ? null
+            : Number(normalizedPriority),
         tags: cardForm.tags
           .split(",")
           .map((tag) => tag.trim())
@@ -865,12 +874,32 @@ export default function CardPage() {
               <label htmlFor="edit-card-priority" className="mb-2 block text-sm font-semibold text-slate-200">
                 Prioridad
               </label>
+              <label className="mb-2 flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={cardForm.priorityDisabled}
+                  onChange={(e) =>
+                    setCardForm((prev) => ({
+                      ...prev,
+                      priorityDisabled: e.target.checked,
+                      priority:
+                        e.target.checked
+                          ? ""
+                          : prev.priority.trim() === ""
+                            ? "0"
+                            : prev.priority,
+                    }))
+                  }
+                />
+                Sin prioridad
+              </label>
               <input
                 id="edit-card-priority"
                 type="number"
                 value={cardForm.priority}
                 onChange={(e) => setCardForm((prev) => ({ ...prev, priority: e.target.value }))}
                 className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                disabled={cardForm.priorityDisabled}
                 placeholder="Sin prioridad"
               />
             </div>

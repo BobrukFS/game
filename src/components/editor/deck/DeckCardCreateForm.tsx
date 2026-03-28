@@ -9,6 +9,7 @@ type CreateCardFormState = {
   description: string
   type: DeckCardType
   priority: string
+  priorityDisabled: boolean
   tags: string
   decisionOptionA: string
   decisionOptionB: string
@@ -19,6 +20,7 @@ const INITIAL_FORM: CreateCardFormState = {
   description: "",
   type: "narrative",
   priority: "",
+  priorityDisabled: true,
   tags: "",
   decisionOptionA: "",
   decisionOptionB: "",
@@ -43,7 +45,7 @@ export default function DeckCardCreateForm({
     if (formData.type === "interactive") return
 
     const normalizedPriority = formData.priority.trim()
-    if (normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
+    if (!formData.priorityDisabled && normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
       return
     }
 
@@ -60,7 +62,10 @@ export default function DeckCardCreateForm({
         title,
         type: formData.type,
         description: formData.description.trim(),
-        priority: normalizedPriority === "" ? undefined : Number(normalizedPriority),
+        priority:
+          formData.priorityDisabled || normalizedPriority === ""
+            ? undefined
+            : Number(normalizedPriority),
         tags: formData.tags
           .split(",")
           .map((tag) => tag.trim())
@@ -178,12 +183,32 @@ export default function DeckCardCreateForm({
             <label htmlFor="card-priority" className="mb-2 block text-sm font-semibold text-slate-200">
               Prioridad
             </label>
+            <label className="mb-2 flex items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={formData.priorityDisabled}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    priorityDisabled: e.target.checked,
+                    priority:
+                      e.target.checked
+                        ? ""
+                        : prev.priority.trim() === ""
+                          ? "0"
+                          : prev.priority,
+                  }))
+                }
+              />
+              Sin prioridad
+            </label>
             <input
               id="card-priority"
               type="number"
               value={formData.priority}
               onChange={(e) => setFormData((prev) => ({ ...prev, priority: e.target.value }))}
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+              disabled={formData.priorityDisabled}
               placeholder="Sin prioridad"
             />
           </div>
