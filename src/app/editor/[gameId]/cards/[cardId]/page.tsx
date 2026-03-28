@@ -285,6 +285,7 @@ export default function CardPage() {
     title: "",
     type: "narrative" as CardType,
     description: "",
+    priority: "",
     tags: "",
   })
 
@@ -411,6 +412,10 @@ export default function CardPage() {
         title: cardData.title,
         type: cardData.type as CardType,
         description: cardData.description,
+        priority:
+          typeof cardData.priority === "number" && Number.isFinite(cardData.priority)
+            ? String(cardData.priority)
+            : "",
         tags: cardData.tags.join(", "),
       })
 
@@ -453,6 +458,10 @@ export default function CardPage() {
         title: card.title,
         type: card.type as CardType,
         description: card.description,
+        priority:
+          typeof card.priority === "number" && Number.isFinite(card.priority)
+            ? String(card.priority)
+            : "",
         tags: card.tags.join(", "),
       })
     }
@@ -608,6 +617,10 @@ export default function CardPage() {
 
     const title = cardForm.title.trim()
     if (!title) return
+    const normalizedPriority = cardForm.priority.trim()
+    if (normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
+      return
+    }
 
     try {
       setIsSaving(true)
@@ -616,6 +629,7 @@ export default function CardPage() {
         title,
         type: cardForm.type,
         description: cardForm.description.trim(),
+        priority: normalizedPriority === "" ? null : Number(normalizedPriority),
         tags: cardForm.tags
           .split(",")
           .map((tag) => tag.trim())
@@ -636,6 +650,10 @@ export default function CardPage() {
 
     const title = cardForm.title.trim()
     if (!title) return
+    const normalizedPriority = cardForm.priority.trim()
+    if (normalizedPriority !== "" && !Number.isInteger(Number(normalizedPriority))) {
+      return
+    }
 
     if (cardForm.type === "interactive") return
 
@@ -649,6 +667,7 @@ export default function CardPage() {
         title,
         type: cardForm.type,
         description: cardForm.description.trim(),
+        priority: normalizedPriority === "" ? null : Number(normalizedPriority),
         tags: cardForm.tags
           .split(",")
           .map((tag) => tag.trim())
@@ -841,12 +860,27 @@ export default function CardPage() {
                 placeholder="Tags separadas por coma"
               />
             </div>
+
+            <div>
+              <label htmlFor="edit-card-priority" className="mb-2 block text-sm font-semibold text-slate-200">
+                Prioridad
+              </label>
+              <input
+                id="edit-card-priority"
+                type="number"
+                value={cardForm.priority}
+                onChange={(e) => setCardForm((prev) => ({ ...prev, priority: e.target.value }))}
+                className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                placeholder="Sin prioridad"
+              />
+            </div>
           </div>
         ) : (
           <div className="rounded bg-slate-800 p-6">
             <p className="mb-2 text-slate-300">{cardForm.description || card.description}</p>
             <div className="flex gap-4 text-sm text-slate-400">
               <span>Tipo: {cardForm.type || card.type}</span>
+              <span>Prioridad: {card.priority ?? "Sin prioridad"}</span>
               <span>Conexiones: {draftOptions.length}</span>
             </div>
             {card.tags.length > 0 && (
