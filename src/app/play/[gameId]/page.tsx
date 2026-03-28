@@ -16,10 +16,10 @@ export default async function PlayGamePage({ params }: PageProps) {
   }
 
   return (
-    <main className="mx-auto max-w-6xl space-y-4 px-4 py-8">
+    <main className="mx-auto min-h-screen max-w-6xl space-y-4 px-4 py-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Play: {bundle.game.name}</h1>
-        <Link href="/play" className="text-sm font-medium text-blue-700 hover:underline">
+        <h1 className="text-2xl font-bold text-slate-100">Play: {bundle.game.name}</h1>
+        <Link href="/play" className="text-sm font-medium text-cyan-300 hover:underline">
           Volver a juegos
         </Link>
       </div>
