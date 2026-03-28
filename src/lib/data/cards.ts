@@ -1,20 +1,4 @@
-import { drawCard, applyOption } from "@/lib/engine/gameEngine"
-import { Card, GameState } from "@/lib/domain"
-
-const state: GameState = {
-  stats: {
-    gold: 5,
-    suspicion: 0,
-    lucidity: 5
-  },
-  inventory: [],
-  flags: {},
-  world: {
-    day: 1,
-    phase: "day"
-  },
-  history: []
-}
+import { Card } from "@/lib/domain"
 
 export const cards: Card[] = [
   {
@@ -23,8 +7,6 @@ export const cards: Card[] = [
     title: "Paquete extraño",
     description: "Algo se mueve dentro.",
     type: "decision",
-    eventType: "main",
-    weight: 1,
     tags: [],
     conditions: [],
     options: [
@@ -55,11 +37,9 @@ export const cards: Card[] = [
     title: "El contenido se revela",
     description: "No deberías haber mirado.",
     type: "decision",
-    eventType: "secondary",
-    weight: 1,
     tags: [],
     conditions: [
-      { type: "flag", key: "opened_package" }
+      { dataType: "flag", operator: "equal", key: "opened_package" }
     ],
     options: [
       {
@@ -89,11 +69,9 @@ export const cards: Card[] = [
   title: "El eco insiste",
   description: "Aunque lo rechazaste, sigue ahí.",
   type: "decision",
-  eventType: "random",
-  weight: 1,
   tags: [],
   conditions: [
-    { type: "flag", key: "rejected_vision" }
+    { dataType: "flag", operator: "equal", key: "rejected_vision" }
   ],
   options: [
     {

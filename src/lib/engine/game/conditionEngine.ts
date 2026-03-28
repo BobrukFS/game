@@ -1,5 +1,5 @@
-import { Condition, ConditionDataType, ConditionOperator, ConditionGroup, isConditionGroup } from "../domain/conditions"
-import { GameState } from "../domain/gameState"
+import { Condition, ConditionDataType, ConditionOperator } from "../../domain/conditions"
+import { GameState } from "../../domain/gameState"
 
 /**
  * Evaluate a single condition against current game state
@@ -18,30 +18,6 @@ export function evaluateCondition(condition: Condition, state: GameState): boole
 
     default:
       return false
-  }
-}
-
-/**
- * Recursively evaluate a condition group with AND/OR logic
- * Handles nested groups for complex expressions like:
- * (stat:health > 50 AND flag:alive) OR world_state:level = 2
- */
-export function evaluateConditionGroup(group: ConditionGroup, state: GameState): boolean {
-  if (group.conditions.length === 0) return true
-
-  const results = group.conditions.map((item) => {
-    if (isConditionGroup(item)) {
-      return evaluateConditionGroup(item, state)
-    } else {
-      return evaluateCondition(item, state)
-    }
-  })
-
-  if (group.operator === "AND") {
-    return results.every((r) => r === true)
-  } else {
-    // OR
-    return results.some((r) => r === true)
   }
 }
 
@@ -154,33 +130,44 @@ function evaluateWorldStateCondition(condition: Condition, state: GameState): bo
 }
 
 /**
- * Check if card should be shown - supports both simple conditions and nested groups
- * If conditions is empty, card is always shown
- * If conditions is a single top-level group, use that group's operator
- * Otherwise, default to AND (all conditions must be met)
+ * Check if all conditions are met for a card
+ * Respects AND/OR logic operators between conditions
  */
-export function canShowCard(conditions: (Condition | ConditionGroup)[], state: GameState): boolean {
+export function canShowCard(conditions: Condition[], state: GameState): boolean {
   if (conditions.length === 0) return true
 
-  // If there's only one item and it's a group, evaluate that group directly
-  if (conditions.length === 1 && isConditionGroup(conditions[0])) {
-    return evaluateConditionGroup(conditions[0] as ConditionGroup, state)
+  // Group conditions by logic operator for proper evaluation
+  let currentGroup: Condition[] = []
+  let groupOperator: "AND" | "OR" = "AND"
+  let hasAnd = true
+
+  for (const condition of conditions) {
+    const nextOperator = condition.logicOperator || "AND"
+
+    // If operator changes, evaluate current group
+    if (nextOperator !== groupOperator && currentGroup.length > 0) {
+      const groupResult = evaluateConditionGroup(currentGroup, groupOperator, state)
+      hasAnd = hasAnd && groupResult
+      currentGroup = []
+    }
+
+    currentGroup.push(condition)
+    groupOperator = nextOperator
   }
 
-  // Otherwise, treat as implicit AND group (backward compatible)
-  return conditions.every((item) => {
-    if (isConditionGroup(item)) {
-      return evaluateConditionGroup(item as ConditionGroup, state)
-    } else {
-      return evaluateCondition(item as Condition, state)
-    }
-  })
+  // Evaluate final group
+  if (currentGroup.length > 0) {
+    const groupResult = evaluateConditionGroup(currentGroup, groupOperator, state)
+    hasAnd = hasAnd && groupResult
+  }
+
+  return hasAnd
 }
 
 /**
- * Legacy: Evaluate a group of conditions with the same operator (deprecated in favor of evaluateConditionGroup)
+ * Evaluate a group of conditions with the same operator
  */
-function evaluateConditionGroupFlat(conditions: Condition[], operator: "AND" | "OR", state: GameState): boolean {
+function evaluateConditionGroup(conditions: Condition[], operator: "AND" | "OR", state: GameState): boolean {
   if (operator === "AND") {
     return conditions.every(cond => evaluateCondition(cond, state))
   } else {

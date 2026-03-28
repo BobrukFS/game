@@ -12,6 +12,16 @@ export interface PlayRuntimeDeck {
   type: string
   weight: number
   repeatable: boolean
+  conditions: PlayRuntimeDeckCondition[]
+}
+
+export interface PlayRuntimeDeckCondition {
+  id: string
+  dataType: string
+  operator: string
+  key: string
+  logicOperator?: string
+  order?: number
 }
 
 export interface PlayRuntimeEffect {
@@ -31,9 +41,12 @@ export interface PlayRuntimeOption {
 
 export interface PlayRuntimeCondition {
   id: string
-  type: string
+  dataType: string
+  operator: string
   key: string
   value: string
+  logicOperator?: string
+  order?: number
 }
 
 export interface PlayRuntimeCard {
@@ -97,6 +110,17 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
         type: true,
         weight: true,
         repeatable: true,
+        conditions: {
+          select: {
+            id: true,
+            dataType: true,
+            operator: true,
+            key: true,
+            logicOperator: true,
+            order: true,
+          },
+          orderBy: { order: "asc" },
+        },
         cards: {
           select: {
             id: true,
@@ -109,9 +133,12 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
             conditions: {
               select: {
                 id: true,
-                type: true,
+                dataType: true,
+                operator: true,
                 key: true,
                 value: true,
+                logicOperator: true,
+                order: true,
               },
             },
             options: {
@@ -184,6 +211,7 @@ export async function getPlayRuntimeBundle(gameId: string): Promise<PlayRuntimeB
       type: deck.type,
       weight: deck.weight,
       repeatable: deck.repeatable,
+      conditions: deck.conditions || [],
     })),
     cards,
     stats,

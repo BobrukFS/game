@@ -1,8 +1,24 @@
 "use client"
 
-import { FormEvent, useMemo, useState } from "react"
-import { updateDeck } from "@/app/actions"
+import { FormEvent, useEffect, useMemo, useState } from "react"
+import {
+  createDeckCondition,
+  deleteDeckCondition,
+  fetchDeckConditionsByDeckId,
+  fetchFlagKeysByGameId,
+  updateDeck,
+} from "@/app/actions"
 import { DeckModel } from "@/components/editor/deck/types"
+
+type DeckCondition = {
+  id: string
+  deckId: string
+  dataType: string
+  operator: "equal" | "not_equal"
+  key: string
+  logicOperator: "AND" | "OR"
+  order: number
+}
 
 export default function DeckGeneralSettingsForm({
   deck,
@@ -18,6 +34,13 @@ export default function DeckGeneralSettingsForm({
   })
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [deckConditions, setDeckConditions] = useState<DeckCondition[]>([])
+  const [flagKeys, setFlagKeys] = useState<string[]>([])
+  const [newDeckCondition, setNewDeckCondition] = useState({
+    operator: "equal" as "equal" | "not_equal",
+    key: "",
+    logicOperator: "AND" as "AND" | "OR",
+  })
 
   const isDirty = useMemo(() => {
     return (
@@ -28,6 +51,24 @@ export default function DeckGeneralSettingsForm({
       formData.repeatable !== (deck.repeatable ?? true)
     )
   }, [deck.description, deck.name, deck.type, deck.weight, deck.repeatable, formData])
+
+  useEffect(() => {
+    void loadDeckConditions()
+  }, [deck.id, deck.gameId])
+
+  async function loadDeckConditions() {
+    try {
+      const [conditions, flags] = await Promise.all([
+        fetchDeckConditionsByDeckId(deck.id),
+        fetchFlagKeysByGameId(deck.gameId),
+      ])
+
+      setDeckConditions(conditions as DeckCondition[])
+      setFlagKeys(flags as string[])
+    } catch (error) {
+      console.error("Error loading deck conditions:", error)
+    }
+  }
 
   function toggleEdit() {
     if (isEditing) {
@@ -69,6 +110,39 @@ export default function DeckGeneralSettingsForm({
       console.error("Error saving deck general settings:", error)
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  async function handleAddDeckCondition(e: FormEvent) {
+    e.preventDefault()
+    if (!isEditing) return
+
+    const key = newDeckCondition.key.trim()
+    if (!key) return
+
+    try {
+      await createDeckCondition(deck.id, {
+        dataType: "flag",
+        operator: newDeckCondition.operator,
+        key,
+        logicOperator: deckConditions.length > 0 ? newDeckCondition.logicOperator : "AND",
+        order: deckConditions.length + 1,
+      })
+
+      setNewDeckCondition({ operator: "equal", key: "", logicOperator: "AND" })
+      await loadDeckConditions()
+    } catch (error) {
+      console.error("Error adding deck condition:", error)
+    }
+  }
+
+  async function handleDeleteDeckCondition(id: string) {
+    if (!isEditing) return
+    try {
+      await deleteDeckCondition(id, deck.id)
+      await loadDeckConditions()
+    } catch (error) {
+      console.error("Error deleting deck condition:", error)
     }
   }
 
@@ -165,6 +239,96 @@ export default function DeckGeneralSettingsForm({
         >
           {isSaving ? "Guardando..." : "Guardar cambios"}
         </button>
+
+        <div className="mt-6 border-t border-slate-700 pt-4">
+          <h3 className="mb-2 text-sm font-semibold">Condiciones del deck (solo flags)</h3>
+          <p className="mb-3 text-xs text-slate-400">
+            Si no se cumplen, ninguna carta de este deck podrá salir.
+          </p>
+
+          <form onSubmit={handleAddDeckCondition} className="mb-3 grid gap-2 md:grid-cols-4">
+            <select
+              value={newDeckCondition.operator}
+              onChange={(e) =>
+                setNewDeckCondition((prev) => ({
+                  ...prev,
+                  operator: e.target.value as "equal" | "not_equal",
+                }))
+              }
+              disabled={!isEditing}
+              className="rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-70"
+            >
+              <option value="equal">Flag activo (equal)</option>
+              <option value="not_equal">Flag inactivo (not_equal)</option>
+            </select>
+
+            <select
+              value={newDeckCondition.key}
+              onChange={(e) => setNewDeckCondition((prev) => ({ ...prev, key: e.target.value }))}
+              disabled={!isEditing}
+              className="rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-70"
+            >
+              <option value="">Selecciona flag</option>
+              {flagKeys.map((flagKey) => (
+                <option key={flagKey} value={flagKey}>
+                  {flagKey}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={newDeckCondition.logicOperator}
+              onChange={(e) =>
+                setNewDeckCondition((prev) => ({
+                  ...prev,
+                  logicOperator: e.target.value as "AND" | "OR",
+                }))
+              }
+              disabled={!isEditing || deckConditions.length === 0}
+              className="rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-70"
+            >
+              <option value="AND">AND</option>
+              <option value="OR">OR</option>
+            </select>
+
+            <button
+              type="submit"
+              disabled={!isEditing}
+              className="rounded-md border border-blue-400/60 bg-blue-600/20 px-4 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Agregar condición
+            </button>
+          </form>
+
+          <div className="space-y-2">
+            {deckConditions.length === 0 ? (
+              <p className="text-xs text-slate-400">Sin condiciones de deck.</p>
+            ) : (
+              deckConditions.map((condition, index) => (
+                <div key={condition.id} className="rounded-md border border-slate-700 bg-slate-900/70 p-2 text-sm">
+                  {index > 0 && (
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-300">
+                      {condition.logicOperator}
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-200">
+                      flag <strong>{condition.key}</strong> {condition.operator === "equal" ? "= true" : "= false"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteDeckCondition(condition.id)}
+                      disabled={!isEditing}
+                      className="rounded border border-red-400/40 bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </form>
     </section>
   )

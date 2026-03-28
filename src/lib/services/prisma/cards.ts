@@ -12,7 +12,8 @@ export interface CardWithRelations {
   conditions: {
     id: string
     cardId: string
-    type: string
+    dataType: string
+    operator: string
     key: string
     value: string
   }[]
@@ -45,7 +46,8 @@ export async function getCardsByDeckId(deckId: string) {
         select: {
           id: true,
           cardId: true,
-          type: true,
+          dataType: true,
+          operator: true,
           key: true,
           value: true,
         },

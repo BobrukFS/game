@@ -1,11 +1,14 @@
 import Link from "next/link"
 import { getAllGames } from "@/lib/services/prisma/games"
+import AppTopNav from "@/components/navigation/AppTopNav"
 
 export default async function PlayIndexPage() {
   const games = await getAllGames()
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+      <AppTopNav />
+
       <header>
         <h1 className="text-2xl font-bold text-gray-900">Play</h1>
         <p className="text-sm text-gray-600">Selecciona un juego para iniciar una sesion normal.</p>

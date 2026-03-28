@@ -129,7 +129,7 @@ export async function createCard(
         deck_id: card.deckId,
         title: card.title,
         description: card.description,
-        weight: card.weight,
+        type: card.type,
         priority: card.priority,
         tags: card.tags
       }
@@ -142,8 +142,8 @@ export async function createCard(
     id: data.id,
     deckId: data.deck_id,
     title: data.title,
+    type: data.type,
     description: data.description,
-    weight: data.weight,
     priority: data.priority,
     tags: data.tags || [],
     createdAt: data.created_at
@@ -158,7 +158,7 @@ export async function updateCard(
   const payload: any = {}
   if (updates.title) payload.title = updates.title
   if (updates.description) payload.description = updates.description
-  if (updates.weight) payload.weight = updates.weight
+  if (updates.type) payload.type = updates.type
   if (updates.priority !== undefined) payload.priority = updates.priority
   if (updates.tags) payload.tags = updates.tags
 
@@ -174,8 +174,8 @@ export async function updateCard(
     id: data.id,
     deckId: data.deck_id,
     title: data.title,
+    type: data.type,
     description: data.description,
-    weight: data.weight,
     priority: data.priority,
     tags: data.tags || [],
     createdAt: data.created_at

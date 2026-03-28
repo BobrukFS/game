@@ -71,6 +71,26 @@ create table if not exists world_states (
   unique(game_id, key)
 );
 
+create table if not exists flags (
+  id uuid primary key default gen_random_uuid(),
+  game_id uuid not null references games(id) on delete cascade,
+  key text not null,
+  unique(game_id, key)
+);
+
+create table if not exists deck_conditions (
+  id uuid primary key default gen_random_uuid(),
+  deck_id uuid not null references decks(id) on delete cascade,
+  data_type text not null default 'flag',
+  operator text not null,
+  key text not null,
+  logic_operator text not null default 'AND',
+  "order" integer not null default 1,
+  constraint deck_conditions_data_type_flag check (data_type = 'flag'),
+  constraint deck_conditions_operator_check check (operator in ('equal', 'not_equal')),
+  constraint deck_conditions_logic_operator_check check (logic_operator in ('AND', 'OR'))
+);
+
 create table if not exists game_logic_configs (
   id uuid primary key default gen_random_uuid(),
   game_id uuid not null unique references games(id) on delete cascade,
@@ -89,6 +109,8 @@ create index if not exists idx_options_card on options(card_id);
 create index if not exists idx_effects_option on effects(option_id);
 create index if not exists idx_global_stats_game on global_stats(game_id);
 create index if not exists idx_world_states_game on world_states(game_id);
+create index if not exists idx_flags_game on flags(game_id);
+create index if not exists idx_deck_conditions_deck on deck_conditions(deck_id);
 
 alter table games enable row level security;
 alter table decks enable row level security;
@@ -98,6 +120,8 @@ alter table options enable row level security;
 alter table effects enable row level security;
 alter table global_stats enable row level security;
 alter table world_states enable row level security;
+alter table flags enable row level security;
+alter table deck_conditions enable row level security;
 alter table game_logic_configs enable row level security;
 
 do $$
@@ -141,6 +165,16 @@ begin
     select 1 from pg_policies where schemaname = 'public' and tablename = 'world_states' and policyname = 'allow_all_world_states'
   ) then
     create policy allow_all_world_states on world_states for all using (true) with check (true);
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'flags' and policyname = 'allow_all_flags'
+  ) then
+    create policy allow_all_flags on flags for all using (true) with check (true);
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and tablename = 'deck_conditions' and policyname = 'allow_all_deck_conditions'
+  ) then
+    create policy allow_all_deck_conditions on deck_conditions for all using (true) with check (true);
   end if;
   if not exists (
     select 1 from pg_policies where schemaname = 'public' and tablename = 'game_logic_configs' and policyname = 'allow_all_game_logic_configs'

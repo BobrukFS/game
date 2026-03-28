@@ -27,61 +27,87 @@ type SequenceNodeData = {
   title: string
   type: string
   description: string
-  conditions: { id: string; type: string; key: string }[]
+  conditions: { id: string; dataType: string; operator: string; key: string }[]
   options: { id: string; text: string }[]
   gameId: string
 }
 
 function SequenceNode({ data }: NodeProps<SequenceNodeData>) {
-  const optionGap = 26
+  const optionGap = 28
+  const typeIcons: Record<string, string> = {
+    narrative: "📖",
+    decision: "🔀",
+    interactive: "🎮",
+  }
+
+  const typeColors: Record<string, string> = {
+    narrative: "bg-slate-700",
+    decision: "bg-blue-700",
+    interactive: "bg-purple-700",
+  }
 
   return (
-    <div className="relative w-[320px] rounded-lg border border-slate-600 bg-slate-900/90 p-3 shadow-lg">
-      <Handle type="target" position={Position.Left} className="h-2 w-2 border border-slate-300 bg-slate-400" />
+    <div className="relative w-[360px] rounded-lg border-2 border-slate-500 bg-slate-800/95 p-4 shadow-xl">
+      <Handle type="target" position={Position.Left} className="h-2.5 w-2.5 border border-slate-200 bg-slate-400" />
 
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <p className="truncate text-sm font-semibold text-slate-100">{data.title}</p>
-        <span className="rounded bg-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">{typeIcons[data.type] || "📝"}</span>
+            <p className="truncate text-sm font-bold text-slate-50">{data.title}</p>
+          </div>
+          <p className="line-clamp-3 mt-1 text-xs text-slate-300">{data.description || "Sin descripcion"}</p>
+        </div>
+        <span
+          className={`${typeColors[data.type] || "bg-slate-700"} flex-shrink-0 rounded px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-100`}
+        >
           {data.type}
         </span>
       </div>
 
-      <p className="line-clamp-2 text-xs text-slate-300">{data.description || "Sin descripcion"}</p>
-      <div className="mt-2 text-[11px] text-slate-400">
-        Condiciones: {data.conditions.length} · Opciones: {data.options.length}
+      <div className="my-2 border-t border-slate-600" />
+
+      <div className="mb-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+        Condiciones: {data.conditions.length} | Opciones: {data.options.length}
       </div>
 
       {data.conditions.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {data.conditions.slice(0, 3).map((condition) => (
-            <span
-              key={condition.id}
-              className="rounded bg-slate-700/80 px-1.5 py-0.5 text-[10px] text-slate-200"
-            >
-              {condition.type}:{condition.key}
-            </span>
-          ))}
-          {data.conditions.length > 3 && (
-            <span className="rounded bg-slate-700/80 px-1.5 py-0.5 text-[10px] text-slate-200">
-              +{data.conditions.length - 3}
-            </span>
-          )}
+        <div className="mb-2 rounded bg-slate-700/50 p-2">
+          <p className="mb-1 text-[10px] font-semibold text-slate-300 uppercase">Condiciones:</p>
+          <div className="flex flex-wrap gap-1">
+            {data.conditions.map((condition) => (
+              <span
+                key={condition.id}
+                className="inline-block rounded bg-amber-900/60 px-1.5 py-0.5 text-[9px] text-amber-100"
+              >
+                {condition.dataType} ({condition.operator}): {condition.key}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
-      <div className="mt-3 space-y-1">
-        {data.options.map((option, index) => (
-          <div key={option.id} className="rounded bg-slate-700/70 px-2 py-1 text-xs text-slate-200">
-            {index + 1}. {option.text || "Sin texto"}
-          </div>
-        ))}
+      <div className="space-y-1.5">
+        {data.options.length > 0 && (
+          <>
+            <p className="text-[10px] font-semibold text-slate-400 uppercase">Salidas:</p>
+            {data.options.map((option, index) => (
+              <div
+                key={option.id}
+                className="rounded bg-gradient-to-r from-blue-900/40 to-blue-800/20 border border-blue-600/30 px-2.5 py-1.5 text-xs text-slate-100"
+              >
+                <span className="font-semibold">[{index + 1}]</span> {option.text || "(Sin texto)"}
+              </div>
+            ))}
+          </>
+        )}
       </div>
 
       <Link
         href={`/editor/${data.gameId}/cards/${data.id}`}
-        className="mt-2 inline-block text-xs font-semibold text-blue-300 hover:text-blue-200"
+        className="mt-3 inline-block rounded bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500 transition-colors"
       >
-        Abrir carta
+        Editar →
       </Link>
 
       {data.options.map((option, index) => (
@@ -90,8 +116,8 @@ function SequenceNode({ data }: NodeProps<SequenceNodeData>) {
           id={`opt-${option.id}`}
           type="source"
           position={Position.Right}
-          style={{ top: 74 + index * optionGap }}
-          className="h-2 w-2 border border-slate-200 bg-blue-400"
+          style={{ top: 120 + index * optionGap }}
+          className="h-2.5 w-2.5 border border-blue-300 bg-blue-500"
         />
       ))}
     </div>
@@ -184,7 +210,7 @@ export default function DeckCardSequenceGrid({
           initialNodes.push({
             id: card.id,
             type: "sequenceCard",
-            position: { x: (level - 1) * 380, y: index * 250 },
+            position: { x: (level - 1) * 480, y: index * 320 },
             draggable: true,
             data: {
               id: card.id,
@@ -194,7 +220,8 @@ export default function DeckCardSequenceGrid({
               gameId,
               conditions: card.conditions.map((condition) => ({
                 id: condition.id,
-                type: condition.type,
+                dataType: condition.dataType,
+                operator: condition.operator,
                 key: condition.key,
               })),
               options: card.options.map((option) => ({ id: option.id, text: option.text })),

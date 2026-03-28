@@ -2,18 +2,21 @@
 
 import { revalidatePath } from "next/cache"
 import * as prismaService from "@/lib/services/prisma"
-import type { InteractionCounterConfig, InteractionRule } from "@/lib/domain"
+import type { InteractionCounterConfig, InteractionRule, Game, Flag } from "@/lib/domain"
 
 const ALLOWED_CARD_TYPES = ["decision", "narrative", "interactive"] as const
-const ALLOWED_CONDITION_TYPES = ["stat_min", "stat_max", "flag", "not_flag", "world_state"] as const
+const ALLOWED_CONDITION_DATA_TYPES = ["stat", "flag", "world_state"] as const
+const ALLOWED_CONDITION_OPERATORS = ["equal", "not_equal", "min", "max"] as const
 const ALLOWED_EFFECT_TYPES = [
   "modify_stat",
-  "set_flag",
-  "add_item",
-  "remove_item",
+  "modify_flag",
   "modify_world_state",
+  // Legacy compatibility
+  "set_flag",
+  "remove_flag",
+  "set_world_state",
 ] as const
-const ALLOWED_WORLD_VALUE_TYPES = ["number", "string", "boolean"] as const
+const ALLOWED_WORLD_VALUE_TYPES = ["number", "string", "boolean", "array"] as const
 
 function requireText(value: string | undefined, fieldName: string) {
   const normalized = (value || "").trim()
@@ -56,29 +59,72 @@ function validateCardType(type: string | undefined) {
   return normalized
 }
 
-function validateConditionInput(input: { type?: string; key?: string; value?: string }) {
-  const type = requireText(input.type, "Tipo de condicion")
-  if (!ALLOWED_CONDITION_TYPES.includes(type as (typeof ALLOWED_CONDITION_TYPES)[number])) {
-    throw new Error("Tipo de condicion invalido")
+function validateConditionInput(input: { dataType?: string; operator?: string; key?: string; value?: string }) {
+  const dataType = requireText(input.dataType, "Tipo de dato de condicion")
+  if (!ALLOWED_CONDITION_DATA_TYPES.includes(dataType as (typeof ALLOWED_CONDITION_DATA_TYPES)[number])) {
+    throw new Error("Tipo de dato de condicion invalido")
+  }
+
+  const operator = requireText(input.operator, "Operador de condicion")
+  if (!ALLOWED_CONDITION_OPERATORS.includes(operator as (typeof ALLOWED_CONDITION_OPERATORS)[number])) {
+    throw new Error("Operador de condicion invalido")
   }
 
   const key = requireText(input.key, "Key de condicion")
 
-  if (type === "stat_min" || type === "stat_max") {
+  // Validar combinacion de dataType y operator
+  const validOperators: Record<string, string[]> = {
+    stat: ["min", "max", "equal"],
+    flag: ["equal", "not_equal"],
+    world_state: ["equal", "not_equal", "min", "max"],
+  }
+
+  if (!validOperators[dataType]?.includes(operator)) {
+    throw new Error(`Operador ${operator} no es valido para tipo de dato ${dataType}`)
+  }
+
+  // Para stat, require numeric value
+  if (dataType === "stat") {
     const rawValue = requireText(input.value, "Valor de condicion")
     const numericValue = Number(rawValue)
     if (!Number.isFinite(numericValue)) {
-      throw new Error("Valor de condicion debe ser numerico para stat_min/stat_max")
+      throw new Error("Valor de condicion debe ser numerico para stat")
     }
-    return { type, key, value: String(numericValue) }
+    return { dataType, operator, key, value: String(numericValue) }
   }
 
-  if (type === "world_state") {
+  // Para world_state, require value
+  if (dataType === "world_state") {
     const value = requireText(input.value, "Valor de condicion world_state")
-    return { type, key, value }
+    return { dataType, operator, key, value }
   }
 
-  return { type, key, value: "true" }
+  // Para flag, value es opcional (siempre es true)
+  return { dataType, operator, key, value: "" }
+}
+
+function validateDeckConditionInput(input: { dataType?: string; operator?: string; key?: string; logicOperator?: string; order?: number }) {
+  const dataType = requireText(input.dataType, "Tipo de dato de condicion de deck")
+  if (dataType !== "flag") {
+    throw new Error("Las condiciones de deck solo permiten flags")
+  }
+
+  const operator = requireText(input.operator, "Operador de condicion de deck")
+  if (operator !== "equal" && operator !== "not_equal") {
+    throw new Error("Las condiciones de deck solo permiten operadores equal / not_equal")
+  }
+
+  const key = requireText(input.key, "Key de condicion de deck")
+  const logicOperator = input.logicOperator === "OR" ? "OR" : "AND"
+  const order = typeof input.order === "number" ? requireInteger(input.order, "Orden", 1, 999) : 1
+
+  return {
+    dataType,
+    operator,
+    key,
+    logicOperator,
+    order,
+  }
 }
 
 function validateEffectInput(input: { type?: string; key?: string; value?: string }) {
@@ -90,12 +136,70 @@ function validateEffectInput(input: { type?: string; key?: string; value?: strin
   const key = requireText(input.key, "Key de efecto")
   const value = requireText(input.value, "Valor de efecto")
 
-  if (type === "modify_world_state") {
-    const amount = Number(value)
-    if (!Number.isFinite(amount)) {
-      throw new Error("modify_world_state requiere valor numerico")
+  if (type === "modify_flag") {
+    try {
+      const payload = JSON.parse(value) as { mode?: string }
+      if (payload.mode !== "set" && payload.mode !== "remove") {
+        throw new Error("modify_flag requiere mode set/remove")
+      }
+    } catch {
+      throw new Error("modify_flag requiere payload JSON valido")
     }
-    return { type, key, value: String(amount) }
+    return { type, key, value }
+  }
+
+  if (type === "modify_stat") {
+    try {
+      const payload = JSON.parse(value) as { mode?: string; unit?: string; amount?: number }
+      if (!["set", "increment", "decrement"].includes(String(payload.mode))) {
+        throw new Error("modify_stat requiere mode set/increment/decrement")
+      }
+      if (!["number", "percent"].includes(String(payload.unit))) {
+        throw new Error("modify_stat requiere unit number/percent")
+      }
+      if (!Number.isFinite(Number(payload.amount))) {
+        throw new Error("modify_stat requiere amount numerico")
+      }
+    } catch {
+      throw new Error("modify_stat requiere payload JSON valido")
+    }
+    return { type, key, value }
+  }
+
+  if (type === "modify_world_state") {
+    try {
+      const payload = JSON.parse(value) as {
+        targetType?: string
+        mode?: string
+        unit?: string
+        amount?: number
+        item?: string
+      }
+
+      if (payload.targetType === "number") {
+        if (!["set", "increment", "decrement"].includes(String(payload.mode))) {
+          throw new Error("modify_world_state numerico requiere mode set/increment/decrement")
+        }
+        if (!["number", "percent"].includes(String(payload.unit))) {
+          throw new Error("modify_world_state numerico requiere unit number/percent")
+        }
+        if (!Number.isFinite(Number(payload.amount))) {
+          throw new Error("modify_world_state numerico requiere amount numerico")
+        }
+      } else if (payload.targetType === "array") {
+        if (!["add", "remove", "clear"].includes(String(payload.mode))) {
+          throw new Error("modify_world_state array requiere mode add/remove/clear")
+        }
+        if ((payload.mode === "add" || payload.mode === "remove") && !String(payload.item || "").trim()) {
+          throw new Error("modify_world_state array add/remove requiere item")
+        }
+      } else {
+        throw new Error("modify_world_state requiere targetType number o array")
+      }
+    } catch {
+      throw new Error("modify_world_state requiere payload JSON valido")
+    }
+    return { type, key, value }
   }
 
   return { type, key, value }
@@ -126,19 +230,49 @@ function validateWorldStateInput(input: { key?: string; valueType?: string; valu
     return { key, valueType, value: rawValue }
   }
 
+  if (valueType === "array") {
+    try {
+      const parsed = JSON.parse(rawValue)
+      if (!Array.isArray(parsed)) {
+        throw new Error("Valor array debe ser un JSON array")
+      }
+    } catch {
+      throw new Error("Valor array debe ser JSON valido")
+    }
+    return { key, valueType, value: rawValue }
+  }
+
   return { key, valueType, value: rawValue }
+}
+
+async function assertFlagExistsInGame(gameId: string, key: string) {
+  const existing = await prismaService.flags.getFlagByKey(gameId, key)
+  if (!existing) {
+    throw new Error("La condicion de tipo flag debe usar un flag existente en Variables")
+  }
 }
 
 // ============================================================================
 // GAMES
 // ============================================================================
 
-export async function fetchGames() {
-  return prismaService.games.getAllGames()
+export async function fetchGames(): Promise<Game[]> {
+  const games = await prismaService.games.getAllGames()
+  return games.map(game => ({
+    ...game,
+    createdAt: game.createdAt?.toISOString(),
+    updatedAt: game.updatedAt?.toISOString(),
+  })) as Game[]
 }
 
-export async function fetchGameById(id: string) {
-  return prismaService.games.getGameById(id)
+export async function fetchGameById(id: string): Promise<Game | null> {
+  const game = await prismaService.games.getGameById(id)
+  if (!game) return null
+  return {
+    ...game,
+    createdAt: game.createdAt?.toISOString(),
+    updatedAt: game.updatedAt?.toISOString(),
+  } as Game
 }
 
 export async function createGame(game: { name: string; description?: string }) {
@@ -250,6 +384,66 @@ export async function updateDeck(
 export async function deleteDeck(id: string, gameId: string) {
   const result = await prismaService.decks.deleteDeck(id)
   revalidatePath(`/editor/${gameId}`)
+  return result
+}
+
+export async function fetchDeckConditionsByDeckId(deckId: string) {
+  return prismaService.deckConditions.getDeckConditionsByDeckId(deckId)
+}
+
+export async function createDeckCondition(
+  deckId: string,
+  data: { dataType: string; operator: string; key: string; logicOperator?: string; order?: number }
+) {
+  const normalized = validateDeckConditionInput(data)
+
+  const deck = await prismaService.decks.getDeckById(deckId)
+  if (!deck) {
+    throw new Error("Deck no encontrado")
+  }
+
+  await assertFlagExistsInGame(deck.gameId, normalized.key)
+
+  const result = await prismaService.deckConditions.createDeckCondition({
+    deckId,
+    ...normalized,
+  })
+
+  revalidatePath(`/editor/${deck.gameId}/decks/${deckId}`)
+  revalidatePath(`/editor/${deck.gameId}/decks/${deckId}/settings`)
+  return result
+}
+
+export async function updateDeckCondition(
+  id: string,
+  deckId: string,
+  data: { dataType?: string; operator?: string; key?: string; logicOperator?: string; order?: number }
+) {
+  const normalized = validateDeckConditionInput(data)
+
+  const deck = await prismaService.decks.getDeckById(deckId)
+  if (!deck) {
+    throw new Error("Deck no encontrado")
+  }
+
+  await assertFlagExistsInGame(deck.gameId, normalized.key)
+
+  const result = await prismaService.deckConditions.updateDeckCondition(id, normalized)
+
+  revalidatePath(`/editor/${deck.gameId}/decks/${deckId}`)
+  revalidatePath(`/editor/${deck.gameId}/decks/${deckId}/settings`)
+  return result
+}
+
+export async function deleteDeckCondition(id: string, deckId: string) {
+  const deck = await prismaService.decks.getDeckById(deckId)
+  if (!deck) {
+    throw new Error("Deck no encontrado")
+  }
+
+  const result = await prismaService.deckConditions.deleteDeckCondition(id)
+  revalidatePath(`/editor/${deck.gameId}/decks/${deckId}`)
+  revalidatePath(`/editor/${deck.gameId}/decks/${deckId}/settings`)
   return result
 }
 
@@ -371,10 +565,28 @@ export async function fetchConditionsByCardId(cardId: string) {
 
 export async function createCondition(
   cardId: string,
-  data: { type: string; key: string; value?: string }
+  data: { dataType: string; operator: string; key: string; value?: string; logicOperator?: string; order?: number }
 ) {
   const normalized = validateConditionInput(data)
-  const payload = { cardId, ...normalized }
+
+  if (normalized.dataType === "flag") {
+    const card = await prismaService.cards.getCardById(cardId)
+    if (!card) {
+      throw new Error("Carta no encontrada")
+    }
+    const deck = await prismaService.decks.getDeckById(card.deckId)
+    if (!deck) {
+      throw new Error("Deck no encontrado")
+    }
+    await assertFlagExistsInGame(deck.gameId, normalized.key)
+  }
+
+  const payload = {
+    cardId,
+    ...normalized,
+    logicOperator: data.logicOperator === "OR" ? "OR" : "AND",
+    order: data.order || 1,
+  }
 
   const result = await prismaService.conditions.createCondition({
     ...payload,
@@ -385,14 +597,29 @@ export async function createCondition(
 
 export async function updateCondition(
   id: string,
-  updates: { type?: string; key?: string; value?: string }
+  updates: { dataType?: string; operator?: string; key?: string; value?: string; logicOperator?: string; order?: number }
 ) {
-  if (!updates.type || !updates.key) {
-    throw new Error("Actualizar condicion requiere type y key")
+  if (!updates.dataType || !updates.operator || !updates.key) {
+    throw new Error("Actualizar condicion requiere dataType, operator y key")
   }
 
   const normalized = validateConditionInput(updates)
-  const result = await prismaService.conditions.updateCondition(id, normalized)
+
+  if (normalized.dataType === "flag") {
+    const context = await prismaService.conditions.getConditionContextById(id)
+    if (!context) {
+      throw new Error("Condicion no encontrada")
+    }
+    await assertFlagExistsInGame(context.card.deck.gameId, normalized.key)
+  }
+
+  const payload = {
+    ...normalized,
+    logicOperator: updates.logicOperator === "OR" ? "OR" : "AND",
+    order: updates.order || 1,
+  }
+  
+  const result = await prismaService.conditions.updateCondition(id, payload)
   revalidatePath(`/editor`)
   return result
 }
@@ -456,8 +683,8 @@ export async function fetchEffectsByOptionId(optionId: string) {
 }
 
 export async function fetchFlagKeysByGameId(gameId: string) {
-  const rows = await prismaService.effects.getFlagKeysByGameId(gameId)
-  return rows.map((row) => row.key)
+  const rows = await prismaService.flags.getFlagsByGameId(gameId)
+  return rows.map((row: { key: string }) => row.key)
 }
 
 export async function createEffect(
@@ -465,6 +692,28 @@ export async function createEffect(
   data: { type: string; key: string; value: string }
 ) {
   const normalized = validateEffectInput(data)
+
+  if (normalized.type === "set_flag") {
+    const optionContext = await prismaService.effects.getOptionGameContext(optionId)
+    if (optionContext) {
+      await prismaService.flags.upsertFlagByKey(optionContext.card.deck.gameId, normalized.key)
+    }
+  }
+
+  if (normalized.type === "modify_flag") {
+    const optionContext = await prismaService.effects.getOptionGameContext(optionId)
+    if (optionContext) {
+      try {
+        const payload = JSON.parse(normalized.value) as { mode?: string }
+        if (payload.mode === "set") {
+          await prismaService.flags.upsertFlagByKey(optionContext.card.deck.gameId, normalized.key)
+        }
+      } catch {
+        // validation already handled in validateEffectInput
+      }
+    }
+  }
+
   const payload = {
     optionId,
     ...normalized,
@@ -481,6 +730,29 @@ export async function updateEffect(
   id: string,
   updates: { type?: string; key?: string; value?: string }
 ) {
+  const current = await prismaService.effects.getEffectGameContext(id)
+  if (!current) {
+    throw new Error("Efecto no encontrado")
+  }
+
+  const nextType = updates.type || current.type
+  const nextKey = (updates.key || current.key || "").trim()
+
+  if (nextType === "set_flag" && nextKey) {
+    await prismaService.flags.upsertFlagByKey(current.option.card.deck.gameId, nextKey)
+  }
+
+  if (nextType === "modify_flag" && nextKey) {
+    try {
+      const payload = JSON.parse(updates.value || "") as { mode?: string }
+      if (payload.mode === "set") {
+        await prismaService.flags.upsertFlagByKey(current.option.card.deck.gameId, nextKey)
+      }
+    } catch {
+      // validation already handled in validateEffectInput when value is provided
+    }
+  }
+
   const result = await prismaService.effects.updateEffect(id, updates)
   revalidatePath(`/editor`)
   return result
@@ -502,6 +774,56 @@ export async function fetchAllStats() {
 
 export async function fetchStatsByGameId(gameId: string) {
   return prismaService.stats.getStatsByGameId(gameId)
+}
+
+export async function fetchVariableReferences(
+  gameId: string,
+  variableType: "stat" | "world_state" | "flag",
+  key: string
+) {
+  const normalizedKey = requireText(key, "Key de variable")
+  const references = await prismaService.variableReferences.getVariableReferences(
+    gameId,
+    variableType,
+    normalizedKey
+  )
+
+  return {
+    cards: references.cards,
+    decks: references.decks,
+    cardsCount: references.cards.length,
+    decksCount: references.decks.length,
+  }
+}
+
+export async function fetchFlagsByGameId(gameId: string): Promise<Flag[]> {
+  return prismaService.flags.getFlagsByGameId(gameId)
+}
+
+export async function createFlag(gameId: string, data: { key: string }) {
+  const result = await prismaService.flags.createFlag({
+    gameId,
+    key: requireText(data.key, "Key de flag"),
+  })
+  revalidatePath(`/editor/${gameId}/stats`)
+  return result
+}
+
+export async function updateFlag(id: string, gameId: string, updates: { key?: string }) {
+  const normalizedUpdates: { key?: string } = {}
+  if (typeof updates.key === "string") {
+    normalizedUpdates.key = requireText(updates.key, "Key de flag")
+  }
+
+  const result = await prismaService.flags.updateFlag(id, normalizedUpdates)
+  revalidatePath(`/editor/${gameId}/stats`)
+  return result
+}
+
+export async function deleteFlag(id: string, gameId: string) {
+  const result = await prismaService.flags.deleteFlag(id)
+  revalidatePath(`/editor/${gameId}/stats`)
+  return result
 }
 
 export async function fetchStatByKey(gameId: string, key: string) {
@@ -696,7 +1018,7 @@ export async function saveGameLogicConfig(
           throw new Error("Condicion invalida en regla de peso")
         }
 
-        if (!["counter", "stat", "world", "flag"].includes(condition.source)) {
+        if (!["counter", "stat", "world", "flag", "deck", "card"].includes(condition.source)) {
           throw new Error("Fuente invalida en condicion de regla de peso")
         }
 
@@ -716,6 +1038,15 @@ export async function saveGameLogicConfig(
       throw new Error("Cada regla de restriccion debe tener id, targetType y targetKey")
     }
 
+    if (![
+      "deck_type",
+      "deck_id",
+      "card_type",
+      "card_id",
+    ].includes(constraintRule.targetType)) {
+      throw new Error("targetType invalido en regla de restriccion")
+    }
+
     if (!constraintRule.counterCondition && !Number.isFinite(constraintRule.maxOccurrences)) {
       throw new Error("La regla de restriccion requiere counterCondition o maxOccurrences")
     }
@@ -733,14 +1064,25 @@ export async function saveGameLogicConfig(
     ) {
       throw new Error("counterCondition invalida en regla de restriccion")
     }
+
+    if (constraintRule.scope && !["cycle", "global"].includes(constraintRule.scope)) {
+      throw new Error("scope invalido en regla de restriccion")
+    }
+
+    if (
+      constraintRule.occurrenceMode &&
+      !["count_matches", "count_unique_targets"].includes(constraintRule.occurrenceMode)
+    ) {
+      throw new Error("occurrenceMode invalido en regla de restriccion")
+    }
   }
 
   const result = await prismaService.gameLogic.upsertGameLogicByGameId({
     gameId,
-    counters,
-    rules,
-    weightRules,
-    constraintRules,
+    counters: counters as any,
+    rules: rules as any,
+    weightRules: weightRules as any,
+    constraintRules: constraintRules as any,
   })
 
   revalidatePath(`/editor/${gameId}/stats`)
@@ -808,10 +1150,10 @@ export async function bootstrapSelectionLogicSetup(gameId: string) {
 
   await prismaService.gameLogic.upsertGameLogicByGameId({
     gameId,
-    counters: mergedCounters,
-    rules: existingRules,
-    weightRules: existingWeightRules,
-    constraintRules: existingConstraintRules,
+    counters: mergedCounters as any,
+    rules: existingRules as any,
+    weightRules: existingWeightRules as any,
+    constraintRules: existingConstraintRules as any,
   })
 
   const existingWorldStateKeys = new Set(worldStates.map((ws) => ws.key))

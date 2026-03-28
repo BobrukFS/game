@@ -6,6 +6,7 @@ export * from "./option"
 export * from "./gameState"
 export * from "./gameLogic"
 export * from "./stat"
-export * from "./worldState"
+export * from "./WorldState"
+export * from "./flag"
 export * from "./game"
 

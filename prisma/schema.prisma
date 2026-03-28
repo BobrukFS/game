@@ -21,6 +21,7 @@ model Game {
   decks       Deck[]
   stats       Stat[]
   worldStates WorldState[]
+  flags       Flag[]
   logicConfig GameLogicConfig?
   
   @@map("games")
@@ -37,9 +38,26 @@ model Deck {
   
   game        Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
   cards       Card[]
+  conditions  DeckCondition[]
   
   @@index([gameId], map: "idx_decks_game")
   @@map("decks")
+}
+
+model DeckCondition {
+  id            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  deckId        String               @map("deck_id") @db.Uuid
+  dataType      ConditionDataType    @default(flag) @map("data_type")
+  operator      ConditionOperator    @map("operator")
+  key           String
+  logicOperator LogicOperator        @default(AND) @map("logic_operator")
+  order         Int                  @default(1)
+
+  deck          Deck                 @relation(fields: [deckId], references: [id], onDelete: Cascade)
+
+  @@index([deckId], map: "idx_deck_conditions_deck")
+  @@index([deckId, order], map: "idx_deck_conditions_deck_order")
+  @@map("deck_conditions")
 }
 
 model Card {
@@ -62,16 +80,38 @@ model Card {
 }
 
 model Condition {
-  id      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  cardId  String  @map("card_id") @db.Uuid
-  type    String
-  key     String
-  value   String
+  id            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cardId        String               @map("card_id") @db.Uuid
+  dataType      ConditionDataType    @map("data_type")
+  operator      ConditionOperator    @map("operator")
+  key           String
+  value         String
+  logicOperator LogicOperator        @default(AND) @map("logic_operator")
+  order         Int                  @default(1)
   
-  card    Card    @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  card          Card                 @relation(fields: [cardId], references: [id], onDelete: Cascade)
   
   @@index([cardId], map: "idx_conditions_card")
+  @@index([cardId, order], map: "idx_conditions_card_order")
   @@map("conditions")
+}
+
+enum ConditionDataType {
+  stat
+  world_state
+  flag
+}
+
+enum ConditionOperator {
+  equal
+  not_equal
+  min
+  max
+}
+
+enum LogicOperator {
+  AND
+  OR
 }
 
 model Option {
@@ -129,6 +169,18 @@ model WorldState {
   @@unique([gameId, key])
   @@index([gameId], map: "idx_world_states_game")
   @@map("world_states")
+}
+
+model Flag {
+  id      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  gameId  String  @map("game_id") @db.Uuid
+  key     String
+
+  game    Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, key])
+  @@index([gameId], map: "idx_flags_game")
+  @@map("flags")
 }
 
 model GameLogicConfig {

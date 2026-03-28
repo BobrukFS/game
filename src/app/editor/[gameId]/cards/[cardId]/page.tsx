@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
 import { useParams } from "next/navigation"
 import {
   createCondition,
@@ -19,7 +19,8 @@ import {
   updateEffect,
   updateOption,
 } from "@/app/actions"
-import type { ConditionType } from "@/lib/domain"
+import type { ConditionDataType, ConditionOperator } from "@/lib/domain/conditions"
+import { getValidOperatorsForDataType, getOperatorLabel, getDataTypeLabel } from "@/lib/domain/conditions"
 import type { CardWithRelations } from "@/lib/services/prisma/cards"
 import type { OptionWithEffects } from "@/lib/services/prisma/options"
 import ConfirmModal from "@/components/editor/ConfirmModal"
@@ -27,11 +28,42 @@ import PathTrail from "@/components/editor/PathTrail"
 
 type CardType = "decision" | "narrative" | "interactive"
 
+/**
+ * Map legacy condition types (stat_min, stat_max, flag, not_flag, world_state)
+ * to new (dataType, operator) pairs during schema transition
+ */
+function mapLegacyTypeToOperator(legacyType: string): ConditionOperator {
+  const mapping: Record<string, ConditionOperator> = {
+    stat_min: "min",
+    stat_max: "max",
+    flag: "equal",
+    not_flag: "not_equal",
+    world_state: "equal",
+  }
+  return mapping[legacyType] || "equal"
+}
+
+/**
+ * Map legacy condition types to new dataTypes during schema transition
+ */
+function mapLegacyTypeToDataType(legacyType: string): ConditionDataType {
+  const mapping: Record<string, ConditionDataType> = {
+    stat_min: "stat",
+    stat_max: "stat",
+    flag: "flag",
+    not_flag: "flag",
+    world_state: "world_state",
+  }
+  return mapping[legacyType] || "stat"
+}
+
 type DraftCondition = {
   id?: string
-  type: ConditionType
+  dataType: ConditionDataType
+  operator: ConditionOperator
   key: string
   value: string
+  logicOperator?: "AND" | "OR"
 }
 
 type DraftEffect = {
@@ -39,6 +71,23 @@ type DraftEffect = {
   type: string
   key: string
   value: string
+}
+
+type NewEffectDraft = {
+  optionIndex: number
+  type: "" | "modify_stat" | "modify_flag" | "modify_world_state"
+  key: string
+  // generic
+  value: string
+  // numeric
+  mode: "set" | "increment" | "decrement"
+  unit: "number" | "percent"
+  amount: string
+  // world array
+  worldArrayMode: "add" | "remove" | "clear"
+  item: string
+  // flag
+  flagMode: "set" | "remove"
 }
 
 type DraftOption = {
@@ -115,15 +164,19 @@ function NextCardPreviewPanel({
 
 function toDraftCondition(condition: {
   id?: string
-  type: string
+  dataType: string
+  operator: string
   key: string
   value: string
+  logicOperator?: string
 }): DraftCondition {
   return {
     id: condition.id,
-    type: condition.type as ConditionType,
+    dataType: condition.dataType as ConditionDataType,
+    operator: condition.operator as ConditionOperator,
     key: condition.key,
     value: condition.value ?? "",
+    logicOperator: (condition.logicOperator as "AND" | "OR") || "AND",
   }
 }
 
@@ -140,6 +193,82 @@ function toDraftOption(option: OptionWithEffects): DraftOption {
       value: String(effect.value ?? ""),
     })),
   }
+}
+
+function createEmptyNewEffect(optionIndex: number): NewEffectDraft {
+  return {
+    optionIndex,
+    type: "",
+    key: "",
+    value: "",
+    mode: "increment",
+    unit: "number",
+    amount: "0",
+    worldArrayMode: "add",
+    item: "",
+    flagMode: "set",
+  }
+}
+
+function buildEffectValue(effect: NewEffectDraft, worldStateTypeMap: Record<string, string>): string {
+  if (effect.type === "modify_stat") {
+    return JSON.stringify({
+      mode: effect.mode,
+      unit: effect.unit,
+      amount: Number(effect.amount || 0),
+    })
+  }
+
+  if (effect.type === "modify_flag") {
+    return JSON.stringify({
+      mode: effect.flagMode,
+    })
+  }
+
+  if (effect.type === "modify_world_state") {
+    const valueType = worldStateTypeMap[effect.key]
+    if (valueType === "array") {
+      return JSON.stringify({
+        targetType: "array",
+        mode: effect.worldArrayMode,
+        item: effect.worldArrayMode === "clear" ? undefined : effect.item,
+      })
+    }
+
+    return JSON.stringify({
+      targetType: "number",
+      mode: effect.mode,
+      unit: effect.unit,
+      amount: Number(effect.amount || 0),
+    })
+  }
+
+  return effect.value
+}
+
+function formatEffectPreview(effect: DraftEffect): string {
+  try {
+    const payload = JSON.parse(effect.value || "") as Record<string, any>
+
+    if (effect.type === "modify_stat") {
+      return `${effect.type}: ${effect.key} → ${payload.mode} ${payload.amount}${payload.unit === "percent" ? "%" : ""}`
+    }
+
+    if (effect.type === "modify_flag") {
+      return `${effect.type}: ${effect.key} → ${payload.mode}`
+    }
+
+    if (effect.type === "modify_world_state") {
+      if (payload.targetType === "array") {
+        return `${effect.type}: ${effect.key} → ${payload.mode}${payload.item ? ` (${payload.item})` : ""}`
+      }
+      return `${effect.type}: ${effect.key} → ${payload.mode} ${payload.amount}${payload.unit === "percent" ? "%" : ""}`
+    }
+  } catch {
+    // legacy plain-text values
+  }
+
+  return `${effect.type}: ${effect.key} = ${effect.value}`
 }
 
 export default function CardPage() {
@@ -165,18 +294,24 @@ export default function CardPage() {
   const [draftConditions, setDraftConditions] = useState<DraftCondition[]>([])
   const [draftOptions, setDraftOptions] = useState<DraftOption[]>([])
 
-  const [newCondition, setNewCondition] = useState<{ type: ConditionType | ""; key: string; value: string }>({
-    type: "",
+  const [newCondition, setNewCondition] = useState<{ 
+    dataType: ConditionDataType | ""
+    operator: ConditionOperator | ""
+    key: string
+    value: string
+    logicOperator: "AND" | "OR" 
+  }>({
+    dataType: "",
+    operator: "",
     key: "",
     value: "",
+    logicOperator: "AND",
   })
   const [newOption, setNewOption] = useState({ text: "", nextCardId: "" })
 
   const [expandedOptionIndexes, setExpandedOptionIndexes] = useState<number[]>([])
 
-  const [newEffect, setNewEffect] = useState<{ optionIndex: number; type: string; key: string; value: string } | null>(
-    null
-  )
+  const [newEffect, setNewEffect] = useState<NewEffectDraft | null>(null)
 
   const [deleteModal, setDeleteModal] = useState<{ open: boolean; target: DeleteTarget | null }>({
     open: false,
@@ -185,6 +320,7 @@ export default function CardPage() {
 
   const [statKeys, setStatKeys] = useState<string[]>([])
   const [worldStateKeys, setWorldStateKeys] = useState<string[]>([])
+  const [worldStateTypeMap, setWorldStateTypeMap] = useState<Record<string, string>>({})
   const [flagKeys, setFlagKeys] = useState<string[]>([])
   const [availableNextCards, setAvailableNextCards] = useState<NextCardPreview[]>([])
 
@@ -193,20 +329,38 @@ export default function CardPage() {
   }, [availableNextCards])
 
   const conditionKeyOptions = useMemo(() => {
-    if (newCondition.type === "stat_min" || newCondition.type === "stat_max") {
+    if (newCondition.dataType === "stat") {
       return statKeys
     }
 
-    if (newCondition.type === "world_state") {
+    if (newCondition.dataType === "world_state") {
       return worldStateKeys
     }
 
-    if (newCondition.type === "flag" || newCondition.type === "not_flag") {
+    if (newCondition.dataType === "flag") {
       return flagKeys
     }
 
     return []
-  }, [flagKeys, newCondition.type, statKeys, worldStateKeys])
+  }, [flagKeys, newCondition.dataType, statKeys, worldStateKeys])
+
+  const effectKeyOptions = useMemo(() => {
+    if (!newEffect) return []
+
+    if (newEffect.type === "modify_stat") {
+      return statKeys
+    }
+
+    if (newEffect.type === "modify_flag") {
+      return flagKeys
+    }
+
+    if (newEffect.type === "modify_world_state") {
+      return worldStateKeys
+    }
+
+    return []
+  }, [newEffect, statKeys, flagKeys, worldStateKeys])
 
   const selectedNextCardPreview = useMemo(() => {
     if (!newOption.nextCardId) return null
@@ -225,13 +379,18 @@ export default function CardPage() {
       fetchCardsByDeckId(deckId),
     ])
 
-    setStatKeys(stats.map((stat) => stat.key))
-    setWorldStateKeys(worldStates.map((ws) => ws.key))
+    setStatKeys(stats.map((stat: { key: string }) => stat.key))
+    setWorldStateKeys(worldStates.map((ws: { key: string }) => ws.key))
+    setWorldStateTypeMap(
+      Object.fromEntries(
+        worldStates.map((ws: { key: string; valueType?: string }) => [ws.key, ws.valueType || "string"])
+      )
+    )
     setFlagKeys(flags)
     setAvailableNextCards(
       deckCards
-        .filter((deckCard) => deckCard.id !== cardId)
-        .map((deckCard) => ({
+        .filter((deckCard: { id: string }) => deckCard.id !== cardId)
+        .map((deckCard: { id: string; title: string; description: string; type: string; priority: number }) => ({
           id: deckCard.id,
           title: deckCard.title,
           description: deckCard.description,
@@ -255,12 +414,14 @@ export default function CardPage() {
         tags: cardData.tags.join(", "),
       })
 
-      const initialConditions = (cardData.conditions || []).map((condition) =>
+      const initialConditions = (cardData.conditions || []).map((condition: any) =>
         toDraftCondition({
           id: condition.id,
-          type: condition.type,
+          dataType: condition.dataType || mapLegacyTypeToDataType(condition.type), // Support both old and new schema
+          operator: condition.operator || mapLegacyTypeToOperator(condition.type), // Map old types
           key: condition.key,
           value: condition.value,
+          logicOperator: condition.logicOperator,
         })
       )
 
@@ -282,7 +443,7 @@ export default function CardPage() {
   function resetDraftsToBase() {
     setDraftConditions(baseConditions)
     setDraftOptions(baseOptions)
-    setNewCondition({ type: "", key: "", value: "" })
+    setNewCondition({ dataType: "", operator: "", key: "", value: "", logicOperator: "AND" })
     setNewOption({ text: "", nextCardId: "" })
     setNewEffect(null)
     setExpandedOptionIndexes([])
@@ -309,7 +470,7 @@ export default function CardPage() {
     setDeleteModal({ open: true, target })
   }
 
-  function confirmDeleteInDraft() {
+  const confirmDeleteInDraft = useCallback(() => {
     const target = deleteModal.target
     if (!target) return
 
@@ -344,27 +505,41 @@ export default function CardPage() {
     }
 
     setDeleteModal({ open: false, target: null })
-  }
+  }, [deleteModal.target])
 
-  function addConditionDraft(e: React.FormEvent) {
+  const addConditionDraft = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     if (!editingCard) return
 
-    const type = newCondition.type.trim() as ConditionType
+    const dataType = newCondition.dataType.trim() as ConditionDataType
+    const operator = newCondition.operator.trim() as ConditionOperator
     const key = newCondition.key.trim()
     const value = newCondition.value.trim()
 
-    if (!type || !key) return
+    if (!dataType || !operator || !key) return
 
-    if ((type === "stat_min" || type === "stat_max" || type === "world_state") && !value) {
+    // Require value for stats and world states, not for boolean flags
+    if ((dataType === "stat" || dataType === "world_state") && !value) {
       return
     }
 
-    setDraftConditions((prev) => [...prev, { type, key, value }])
-    setNewCondition({ type: "", key: "", value: "" })
-  }
+    const nextCondition: DraftCondition = {
+      dataType,
+      operator,
+      key,
+      value,
+    }
 
-  function addOptionDraft(e: React.FormEvent) {
+    // Only add logicOperator if there are already conditions
+    if (draftConditions.length > 0) {
+      nextCondition.logicOperator = newCondition.logicOperator
+    }
+
+    setDraftConditions((prev) => [...prev, nextCondition])
+    setNewCondition({ dataType: "", operator: "", key: "", value: "", logicOperator: "AND" })
+  }, [editingCard, newCondition, draftConditions])
+
+  const addOptionDraft = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     if (!editingCard) return
     if (cardForm.type === "interactive") return
@@ -385,17 +560,31 @@ export default function CardPage() {
     ])
 
     setNewOption({ text: "", nextCardId: "" })
-  }
+  }, [editingCard, cardForm.type, draftOptions.length, newOption])
 
-  function addEffectDraft(e: React.FormEvent, optionIndex: number) {
+  const addEffectDraft = useCallback((e: React.FormEvent, optionIndex: number) => {
     e.preventDefault()
     if (!editingCard) return
     if (!newEffect || newEffect.optionIndex !== optionIndex) return
 
     const type = newEffect.type.trim()
     const key = newEffect.key.trim()
-    const value = newEffect.value.trim()
-    if (!type || !key || !value) return
+    
+    if (!type || !key) return
+
+    if (type === "modify_stat" && !newEffect.amount.trim()) return
+
+    if (type === "modify_world_state") {
+      const wsType = worldStateTypeMap[key]
+      if (wsType === "array" && newEffect.worldArrayMode !== "clear" && !newEffect.item.trim()) {
+        return
+      }
+      if (wsType !== "array" && !newEffect.amount.trim()) {
+        return
+      }
+    }
+
+    const value = buildEffectValue(newEffect, worldStateTypeMap)
 
     setDraftOptions((prev) =>
       prev.map((option, index) => {
@@ -408,10 +597,38 @@ export default function CardPage() {
     )
 
     setNewEffect(null)
-  }
+  }, [editingCard, newEffect, worldStateTypeMap])
 
   function updateOptionDraft(optionIndex: number, patch: Partial<DraftOption>) {
     setDraftOptions((prev) => prev.map((option, idx) => (idx === optionIndex ? { ...option, ...patch } : option)))
+  }
+
+  async function saveCardOnly() {
+    if (!card || !editingCard) return
+
+    const title = cardForm.title.trim()
+    if (!title) return
+
+    try {
+      setIsSaving(true)
+
+      await updateCard(card.id, {
+        title,
+        type: cardForm.type,
+        description: cardForm.description.trim(),
+        tags: cardForm.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      })
+
+      setEditingCard(false)
+      await loadCardAndRefs()
+    } catch (error) {
+      console.error("Error saving card:", error)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   async function saveAllChanges() {
@@ -448,12 +665,11 @@ export default function CardPage() {
 
       for (const condition of draftConditions) {
         const payload = {
-          type: condition.type,
+          dataType: condition.dataType,
+          operator: condition.operator,
           key: condition.key.trim(),
-          value:
-            condition.type === "flag" || condition.type === "not_flag"
-              ? undefined
-              : condition.value.trim(),
+          value: condition.dataType === "flag" ? undefined : condition.value.trim(),
+          logicOperator: condition.logicOperator || "AND",
         }
 
         if (condition.id) {
@@ -654,42 +870,71 @@ export default function CardPage() {
           <h2 className="mb-4 text-2xl font-bold">Condiciones</h2>
 
           <form onSubmit={addConditionDraft} className="mb-4 rounded bg-slate-800 p-4">
-            <label htmlFor="new-condition-type" className="mb-1 block text-xs font-semibold text-slate-300">
-              Tipo
+            <label htmlFor="new-condition-datatype" className="mb-1 block text-xs font-semibold text-slate-300">
+              Tipo de Dato
             </label>
             <select
-              id="new-condition-type"
-              value={newCondition.type}
+              id="new-condition-datatype"
+              value={newCondition.dataType}
               onChange={(e) =>
                 setNewCondition((prev) => ({
                   ...prev,
-                  type: e.target.value as ConditionType | "",
+                  dataType: e.target.value as ConditionDataType | "",
+                  operator: "",
                   key: "",
-                  value: e.target.value === "flag" || e.target.value === "not_flag" ? "" : prev.value,
+                  value: "",
                 }))
               }
               disabled={!editingCard}
               className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
             >
-              <option value="">Selecciona tipo</option>
-              <option value="stat_min">Stat Min</option>
-              <option value="stat_max">Stat Max</option>
-              <option value="flag">Flag</option>
-              <option value="not_flag">Not Flag</option>
-              <option value="world_state">World State</option>
+              <option value="">Selecciona tipo de dato</option>
+              <option value="stat">{getDataTypeLabel("stat")}</option>
+              <option value="flag">{getDataTypeLabel("flag")}</option>
+              <option value="world_state">{getDataTypeLabel("world_state")}</option>
+            </select>
+
+            <label htmlFor="new-condition-operator" className="mb-1 block text-xs font-semibold text-slate-300">
+              Operador
+            </label>
+            <select
+              id="new-condition-operator"
+              value={newCondition.operator}
+              onChange={(e) =>
+                setNewCondition((prev) => ({
+                  ...prev,
+                  operator: e.target.value as ConditionOperator | "",
+                }))
+              }
+              disabled={!editingCard || !newCondition.dataType}
+              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+            >
+              <option value="">{newCondition.dataType ? "Selecciona operador" : "Selecciona tipo de dato primero"}</option>
+              {newCondition.dataType &&
+                getValidOperatorsForDataType(newCondition.dataType).map((op) => (
+                  <option key={op} value={op}>
+                    {getOperatorLabel(op as ConditionOperator)}
+                  </option>
+                ))}
             </select>
 
             <label htmlFor="new-condition-key" className="mb-1 block text-xs font-semibold text-slate-300">
-              Key
+              Clave/Variable
             </label>
             <select
               id="new-condition-key"
               value={newCondition.key}
               onChange={(e) => setNewCondition((prev) => ({ ...prev, key: e.target.value }))}
-              disabled={!editingCard || !newCondition.type || conditionKeyOptions.length === 0}
+              disabled={!editingCard || !newCondition.dataType || conditionKeyOptions.length === 0}
               className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
             >
-              <option value="">{newCondition.type ? "Selecciona key" : "Selecciona tipo primero"}</option>
+              <option value="">
+                {!newCondition.dataType
+                  ? "Selecciona tipo de dato"
+                  : conditionKeyOptions.length === 0
+                    ? "No hay opciones disponibles"
+                    : "Selecciona clave"}
+              </option>
               {conditionKeyOptions.map((key) => (
                 <option key={key} value={key}>
                   {key}
@@ -697,20 +942,38 @@ export default function CardPage() {
               ))}
             </select>
 
-            {(newCondition.type === "stat_min" || newCondition.type === "stat_max" || newCondition.type === "world_state") && (
+            {newCondition.dataType !== "flag" && (
               <>
                 <label htmlFor="new-condition-value" className="mb-1 block text-xs font-semibold text-slate-300">
-                  {newCondition.type === "world_state" ? "Value" : "Value numerico"}
+                  Valor {newCondition.dataType === "stat" ? "(numérico)" : ""}
                 </label>
                 <input
                   id="new-condition-value"
-                  type={newCondition.type === "world_state" ? "text" : "number"}
-                  placeholder="0"
+                  type={newCondition.dataType === "stat" ? "number" : "text"}
+                  placeholder={newCondition.dataType === "stat" ? "0" : "valor"}
                   value={newCondition.value}
                   onChange={(e) => setNewCondition((prev) => ({ ...prev, value: e.target.value }))}
-                  disabled={!editingCard}
+                  disabled={!editingCard || !newCondition.dataType}
                   className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
                 />
+              </>
+            )}
+
+            {draftConditions.length > 0 && (
+              <>
+                <label htmlFor="condition-logic-next" className="mb-1 block text-xs font-semibold text-slate-300">
+                  Conectar con próxima condición
+                </label>
+                <select
+                  id="condition-logic-next"
+                  value={newCondition.logicOperator}
+                  onChange={(e) => setNewCondition((prev) => ({ ...prev, logicOperator: e.target.value as "AND" | "OR" }))}
+                  disabled={!editingCard}
+                  className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+                >
+                  <option value="AND">AND (todas deben cumplirse)</option>
+                  <option value="OR">OR (una debe cumplirse)</option>
+                </select>
               </>
             )}
 
@@ -719,35 +982,41 @@ export default function CardPage() {
               disabled={!editingCard}
               className="w-full rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Agregar
+              Agregar Condición
             </button>
           </form>
 
           <div className="space-y-2">
             {draftConditions.map((condition, index) => (
-              <div key={`${condition.id || "new"}-${index}`} className="flex items-center justify-between rounded bg-slate-800 p-3">
-                <div className="text-sm">
-                  <p className="font-semibold">{condition.type}</p>
-                  {condition.type === "flag" || condition.type === "not_flag" ? (
-                    <p className="text-slate-400">{condition.key}</p>
-                  ) : (
-                    <p className="text-slate-400">
-                      {condition.key}: {condition.value}
+              <div key={`${condition.id || "new"}-${index}`}>
+                {index > 0 && condition.logicOperator && (
+                  <div className="mb-1 pl-3 text-xs font-semibold text-blue-400 uppercase tracking-wider">
+                    {condition.logicOperator}
+                  </div>
+                )}
+                <div className="flex items-center justify-between rounded bg-slate-800 p-3">
+                  <div className="text-sm">
+                    <p className="font-semibold text-slate-100">
+                      {getDataTypeLabel(condition.dataType)} · {getOperatorLabel(condition.operator)}
                     </p>
-                  )}
-                </div>
+                    <p className="text-slate-400">
+                      {condition.key}
+                      {condition.value && ` = ${condition.value}`}
+                    </p>
+                  </div>
 
-                <TrashButton
-                  onClick={() =>
-                    requestDelete(
-                      condition.id
-                        ? { kind: "condition", id: condition.id }
-                        : { kind: "condition", index }
-                    )
-                  }
-                  title="Eliminar condicion"
-                  disabled={!editingCard}
-                />
+                  <TrashButton
+                    onClick={() =>
+                      requestDelete(
+                        condition.id
+                          ? { kind: "condition", id: condition.id }
+                          : { kind: "condition", index }
+                      )
+                    }
+                    title="Eliminar condición"
+                    disabled={!editingCard}
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -890,30 +1159,180 @@ export default function CardPage() {
                           <form onSubmit={(e) => addEffectDraft(e, optionIndex)} className="mb-2 space-y-2">
                             <select
                               value={newEffect.type}
-                              onChange={(e) => setNewEffect({ ...newEffect, type: e.target.value })}
+                              onChange={(e) =>
+                                setNewEffect({
+                                  ...newEffect,
+                                  type: e.target.value as NewEffectDraft["type"],
+                                  key: "",
+                                  value: "",
+                                  amount: "0",
+                                  item: "",
+                                })
+                              }
                               className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
                             >
-                              <option value="">Tipo efecto</option>
+                              <option value="">Selecciona tipo</option>
                               <option value="modify_stat">Modify Stat</option>
-                              <option value="set_flag">Set Flag</option>
-                              <option value="add_item">Add Item</option>
-                              <option value="remove_item">Remove Item</option>
                               <option value="modify_world_state">Modify World State</option>
+                              <option value="modify_flag">Modify Flag</option>
                             </select>
-                            <input
-                              type="text"
-                              placeholder="Key"
-                              value={newEffect.key}
-                              onChange={(e) => setNewEffect({ ...newEffect, key: e.target.value })}
-                              className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
-                            />
-                            <input
-                              type="text"
-                              placeholder="Value"
-                              value={newEffect.value}
-                              onChange={(e) => setNewEffect({ ...newEffect, value: e.target.value })}
-                              className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
-                            />
+
+                            {newEffect.type && effectKeyOptions.length > 0 ? (
+                              <select
+                                value={newEffect.key}
+                                onChange={(e) => setNewEffect({ ...newEffect, key: e.target.value, amount: "0", item: "" })}
+                                className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                              >
+                                <option value="">Selecciona {newEffect.type}</option>
+                                {effectKeyOptions.map((key) => (
+                                  <option key={key} value={key}>
+                                    {key}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                placeholder={newEffect.type === "modify_flag" ? "Key (puedes crear una nueva)" : "Key"}
+                                value={newEffect.key}
+                                onChange={(e) => setNewEffect({ ...newEffect, key: e.target.value })}
+                                className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                              />
+                            )}
+
+                            {newEffect.type === "modify_stat" && (
+                              <>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <select
+                                    value={newEffect.mode}
+                                    onChange={(e) =>
+                                      setNewEffect({
+                                        ...newEffect,
+                                        mode: e.target.value as "set" | "increment" | "decrement",
+                                      })
+                                    }
+                                    className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                  >
+                                    <option value="set">set</option>
+                                    <option value="increment">increment</option>
+                                    <option value="decrement">decrement</option>
+                                  </select>
+                                  <select
+                                    value={newEffect.unit}
+                                    onChange={(e) =>
+                                      setNewEffect({
+                                        ...newEffect,
+                                        unit: e.target.value as "number" | "percent",
+                                      })
+                                    }
+                                    className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                  >
+                                    <option value="number">number</option>
+                                    <option value="percent">percent</option>
+                                  </select>
+                                </div>
+                                <input
+                                  type="number"
+                                  placeholder={newEffect.unit === "percent" ? "Amount %" : "Amount"}
+                                  value={newEffect.amount}
+                                  onChange={(e) => setNewEffect({ ...newEffect, amount: e.target.value })}
+                                  className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                />
+                              </>
+                            )}
+
+                            {newEffect.type === "modify_world_state" && newEffect.key && (
+                              (() => {
+                                const wsType = worldStateTypeMap[newEffect.key]
+                                if (wsType === "array") {
+                                  return (
+                                    <>
+                                      <select
+                                        value={newEffect.worldArrayMode}
+                                        onChange={(e) =>
+                                          setNewEffect({
+                                            ...newEffect,
+                                            worldArrayMode: e.target.value as "add" | "remove" | "clear",
+                                          })
+                                        }
+                                        className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                      >
+                                        <option value="add">add</option>
+                                        <option value="remove">remove</option>
+                                        <option value="clear">clear</option>
+                                      </select>
+                                      {newEffect.worldArrayMode !== "clear" && (
+                                        <input
+                                          type="text"
+                                          placeholder="Item"
+                                          value={newEffect.item}
+                                          onChange={(e) => setNewEffect({ ...newEffect, item: e.target.value })}
+                                          className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                        />
+                                      )}
+                                    </>
+                                  )
+                                }
+
+                                return (
+                                  <>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <select
+                                        value={newEffect.mode}
+                                        onChange={(e) =>
+                                          setNewEffect({
+                                            ...newEffect,
+                                            mode: e.target.value as "set" | "increment" | "decrement",
+                                          })
+                                        }
+                                        className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                      >
+                                        <option value="set">set</option>
+                                        <option value="increment">increment</option>
+                                        <option value="decrement">decrement</option>
+                                      </select>
+                                      <select
+                                        value={newEffect.unit}
+                                        onChange={(e) =>
+                                          setNewEffect({
+                                            ...newEffect,
+                                            unit: e.target.value as "number" | "percent",
+                                          })
+                                        }
+                                        className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                      >
+                                        <option value="number">number</option>
+                                        <option value="percent">percent</option>
+                                      </select>
+                                    </div>
+                                    <input
+                                      type="number"
+                                      placeholder={newEffect.unit === "percent" ? "Amount %" : "Amount"}
+                                      value={newEffect.amount}
+                                      onChange={(e) => setNewEffect({ ...newEffect, amount: e.target.value })}
+                                      className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                                    />
+                                  </>
+                                )
+                              })()
+                            )}
+
+                            {newEffect.type === "modify_flag" && (
+                              <select
+                                value={newEffect.flagMode}
+                                onChange={(e) =>
+                                  setNewEffect({
+                                    ...newEffect,
+                                    flagMode: e.target.value as "set" | "remove",
+                                  })
+                                }
+                                className="w-full rounded bg-slate-600 px-2 py-1 text-sm text-white"
+                              >
+                                <option value="set">set</option>
+                                <option value="remove">remove</option>
+                              </select>
+                            )}
+
                             <div className="flex gap-2">
                               <button type="submit" className="flex-1 rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700">
                                 Agregar
@@ -931,7 +1350,7 @@ export default function CardPage() {
                           <button
                             type="button"
                             disabled={!editingCard}
-                            onClick={() => setNewEffect({ optionIndex, type: "", key: "", value: "" })}
+                            onClick={() => setNewEffect(createEmptyNewEffect(optionIndex))}
                             className="mb-2 w-full rounded bg-slate-600 px-2 py-1 text-xs text-white hover:bg-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             + Efecto
@@ -941,9 +1360,7 @@ export default function CardPage() {
                         <div className="space-y-1">
                           {option.effects.map((effect, effectIndex) => (
                             <div key={`${effect.id || "new-eff"}-${effectIndex}`} className="flex items-center justify-between rounded bg-slate-600 p-2 text-xs">
-                              <span>
-                                {effect.type}: {effect.key} = {effect.value}
-                              </span>
+                              <span>{formatEffectPreview(effect)}</span>
                               <TrashButton
                                 onClick={() =>
                                   requestDelete({
@@ -980,11 +1397,19 @@ export default function CardPage() {
             </button>
             <button
               type="button"
+              onClick={() => void saveCardOnly()}
+              disabled={isSaving}
+              className="rounded border border-blue-400/60 bg-blue-600/20 px-4 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSaving ? "Guardando..." : "Guardar Carta"}
+            </button>
+            <button
+              type="button"
               onClick={() => void saveAllChanges()}
               disabled={isSaving}
               className="rounded border border-emerald-400/60 bg-emerald-600/20 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/35 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSaving ? "Guardando todo..." : "Guardar todo"}
+              {isSaving ? "Guardando todo..." : "Guardar Todo"}
             </button>
           </>
         ) : null}

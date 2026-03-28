@@ -11,16 +11,37 @@ import {
   createWorldState,
   updateWorldState,
   deleteWorldState,
+  fetchFlagsByGameId,
+  createFlag,
+  updateFlag,
+  deleteFlag,
+  fetchVariableReferences,
 } from "@/app/actions"
-import { Stat } from "@/lib/domain"
+import { Flag, Stat } from "@/lib/domain"
 import PathTrail from "@/components/editor/PathTrail"
 
 type WorldStateItem = {
   id: string
   gameId: string
   key: string
-  valueType: "number" | "string" | "boolean"
+  valueType: "number" | "string" | "boolean" | "array"
   value: string
+}
+
+type VariableType = "stat" | "world_state" | "flag"
+
+type VariableReferenceSummary = {
+  cardsCount: number
+  decksCount: number
+}
+
+type VariableReferenceModalState = {
+  open: boolean
+  loading: boolean
+  type: VariableType
+  key: string
+  cards: Array<{ id: string; title: string; deck: { id: string; name: string } }>
+  decks: Array<{ id: string; name: string }>
 }
 
 export default function StatsPage() {
@@ -29,13 +50,17 @@ export default function StatsPage() {
 
   const [stats, setStats] = useState<Stat[]>([])
   const [worldStates, setWorldStates] = useState<WorldStateItem[]>([])
+  const [flags, setFlags] = useState<Flag[]>([])
+  const [referenceSummary, setReferenceSummary] = useState<Record<string, VariableReferenceSummary>>({})
   const [isLoading, setIsLoading] = useState(true)
 
   const [showStatForm, setShowStatForm] = useState(false)
   const [showWorldStateForm, setShowWorldStateForm] = useState(false)
+  const [showFlagForm, setShowFlagForm] = useState(false)
 
   const [editingStatId, setEditingStatId] = useState<string | null>(null)
   const [editingWorldStateId, setEditingWorldStateId] = useState<string | null>(null)
+  const [editingFlagId, setEditingFlagId] = useState<string | null>(null)
 
   const [feedback, setFeedback] = useState<string>("")
 
@@ -48,12 +73,23 @@ export default function StatsPage() {
 
   const [worldStateForm, setWorldStateForm] = useState<{
     key: string
-    valueType: "number" | "string" | "boolean"
+    valueType: "number" | "string" | "boolean" | "array"
     value: string
   }>({
     key: "",
     valueType: "number",
     value: "0",
+  })
+
+  const [flagForm, setFlagForm] = useState({ key: "" })
+
+  const [referencesModal, setReferencesModal] = useState<VariableReferenceModalState>({
+    open: false,
+    loading: false,
+    type: "stat",
+    key: "",
+    cards: [],
+    decks: [],
   })
 
   useEffect(() => {
@@ -63,12 +99,16 @@ export default function StatsPage() {
   async function loadAll() {
     try {
       setIsLoading(true)
-      const [statsData, worldData] = await Promise.all([
+      const [statsData, worldData, flagsData] = await Promise.all([
         fetchStatsByGameId(gameId),
         fetchWorldStatesByGameId(gameId),
+        fetchFlagsByGameId(gameId),
       ])
       setStats(statsData)
       setWorldStates(worldData as WorldStateItem[])
+      setFlags(flagsData)
+
+      await loadReferenceSummary(statsData, worldData as WorldStateItem[], flagsData)
     } catch (error) {
       console.error("Error loading stats/world states:", error)
     } finally {
@@ -76,8 +116,71 @@ export default function StatsPage() {
     }
   }
 
+  async function loadReferenceSummary(
+    statsData: Stat[],
+    worldData: WorldStateItem[],
+    flagsData: Flag[]
+  ) {
+    const entries: Array<{ type: VariableType; key: string }> = [
+      ...statsData.map((item) => ({ type: "stat" as const, key: item.key })),
+      ...worldData.map((item) => ({ type: "world_state" as const, key: item.key })),
+      ...flagsData.map((item) => ({ type: "flag" as const, key: item.key })),
+    ]
+
+    const summaries = await Promise.all(
+      entries.map(async (entry) => {
+        const refs = await fetchVariableReferences(gameId, entry.type, entry.key)
+        return {
+          id: `${entry.type}:${entry.key}`,
+          cardsCount: refs.cardsCount,
+          decksCount: refs.decksCount,
+        }
+      })
+    )
+
+    const nextMap: Record<string, VariableReferenceSummary> = {}
+    for (const summary of summaries) {
+      nextMap[summary.id] = {
+        cardsCount: summary.cardsCount,
+        decksCount: summary.decksCount,
+      }
+    }
+    setReferenceSummary(nextMap)
+  }
+
   const statKeys = useMemo(() => new Set(stats.map((s) => s.key)), [stats])
   const worldKeys = useMemo(() => new Set(worldStates.map((w) => w.key)), [worldStates])
+  const flagKeys = useMemo(() => new Set(flags.map((f) => f.key)), [flags])
+
+  function summaryFor(type: VariableType, key: string): VariableReferenceSummary {
+    return referenceSummary[`${type}:${key}`] || { cardsCount: 0, decksCount: 0 }
+  }
+
+  async function openReferences(type: VariableType, key: string) {
+    setReferencesModal({
+      open: true,
+      loading: true,
+      type,
+      key,
+      cards: [],
+      decks: [],
+    })
+
+    try {
+      const refs = await fetchVariableReferences(gameId, type, key)
+      setReferencesModal({
+        open: true,
+        loading: false,
+        type,
+        key,
+        cards: refs.cards,
+        decks: refs.decks,
+      })
+    } catch (error) {
+      console.error("Error loading references:", error)
+      setReferencesModal((prev) => ({ ...prev, loading: false }))
+    }
+  }
 
   async function handleSubmitStat(e: React.FormEvent) {
     e.preventDefault()
@@ -171,6 +274,15 @@ export default function StatsPage() {
       return
     }
 
+    if (worldStateForm.valueType === "array") {
+      try {
+        JSON.parse(rawValue)
+      } catch {
+        setFeedback("World state array debe ser JSON válido")
+        return
+      }
+    }
+
     try {
       if (editingWorldStateId) {
         await updateWorldState(editingWorldStateId, gameId, {
@@ -196,6 +308,36 @@ export default function StatsPage() {
     }
   }
 
+  async function handleSubmitFlag(e: React.FormEvent) {
+    e.preventDefault()
+    setFeedback("")
+
+    const key = flagForm.key.trim()
+    if (!editingFlagId && !key) {
+      setFeedback("La key del flag es obligatoria")
+      return
+    }
+
+    if (!editingFlagId && flagKeys.has(key)) {
+      setFeedback("Ya existe un flag con esa key")
+      return
+    }
+
+    try {
+      if (editingFlagId) {
+        await updateFlag(editingFlagId, gameId, { key })
+      } else {
+        await createFlag(gameId, { key })
+      }
+
+      resetFlagForm()
+      await loadAll()
+    } catch (error) {
+      setFeedback("No se pudo guardar el flag")
+      console.error("Error saving flag:", error)
+    }
+  }
+
   function handleEditStat(stat: Stat) {
     setEditingStatId(stat.id)
     setStatForm({
@@ -215,6 +357,12 @@ export default function StatsPage() {
       value: item.value,
     })
     setShowWorldStateForm(true)
+  }
+
+  function handleEditFlag(item: Flag) {
+    setEditingFlagId(item.id)
+    setFlagForm({ key: item.key })
+    setShowFlagForm(true)
   }
 
   async function handleDeleteStat(statId: string) {
@@ -237,6 +385,16 @@ export default function StatsPage() {
     }
   }
 
+  async function handleDeleteFlag(flagId: string) {
+    if (!confirm("Eliminar este flag?")) return
+    try {
+      await deleteFlag(flagId, gameId)
+      await loadAll()
+    } catch (error) {
+      console.error("Error deleting flag:", error)
+    }
+  }
+
   function resetStatForm() {
     setEditingStatId(null)
     setStatForm({ key: "", value: 0, min: 0, max: 100 })
@@ -247,6 +405,12 @@ export default function StatsPage() {
     setEditingWorldStateId(null)
     setWorldStateForm({ key: "", valueType: "number", value: "0" })
     setShowWorldStateForm(false)
+  }
+
+  function resetFlagForm() {
+    setEditingFlagId(null)
+    setFlagForm({ key: "" })
+    setShowFlagForm(false)
   }
 
   if (isLoading) return <div className="p-8">Cargando...</div>
@@ -261,7 +425,7 @@ export default function StatsPage() {
           ]}
         />
         <h1 className="text-3xl font-bold">Variables del Juego</h1>
-        <p className="text-slate-400 mt-2">Stats y World State se gestionan por separado y sin valores por defecto.</p>
+        <p className="text-slate-400 mt-2">Stats, World State y Flags se gestionan por separado.</p>
       </div>
 
       {feedback && <p className="text-sm text-amber-300">{feedback}</p>}
@@ -342,6 +506,13 @@ export default function StatsPage() {
                 <div>
                   <p className="font-semibold text-lg">{stat.key}</p>
                   <p className="text-slate-400 text-sm">Value: {stat.value} | Rango: {stat.min} - {stat.max}</p>
+                  <button
+                    type="button"
+                    onClick={() => void openReferences("stat", stat.key)}
+                    className="mt-1 text-xs text-sky-300 hover:text-sky-200"
+                  >
+                    Vinculaciones: {summaryFor("stat", stat.key).cardsCount} cartas · {summaryFor("stat", stat.key).decksCount} decks
+                  </button>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => handleEditStat(stat)} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-2 rounded text-white text-sm">Editar</button>
@@ -381,22 +552,29 @@ export default function StatsPage() {
                 <label className="block text-sm font-semibold mb-2">Tipo de valor</label>
                 <select
                   value={worldStateForm.valueType}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const newType = e.target.value as "number" | "string" | "boolean" | "array"
+                    let newValue = worldStateForm.value
+                    if (newType === "boolean") newValue = "false"
+                    if (newType === "array") newValue = "[]"
+                    if (newType === "number") newValue = "0"
+                    if (newType === "string") newValue = ""
                     setWorldStateForm((prev) => ({
                       ...prev,
-                      valueType: e.target.value as "number" | "string" | "boolean",
-                      value: e.target.value === "boolean" ? "false" : prev.value,
+                      valueType: newType,
+                      value: newValue,
                     }))
-                  }
+                  }}
                   className="w-full px-4 py-2 bg-slate-700 rounded text-white"
                 >
                   <option value="number">number</option>
                   <option value="string">string</option>
                   <option value="boolean">boolean</option>
+                  <option value="array">array</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold mb-2">Value</label>
+                <label className="block text-sm font-semibold mb-2">Value (Inicial)</label>
                 {worldStateForm.valueType === "boolean" ? (
                   <select
                     value={worldStateForm.value}
@@ -406,6 +584,15 @@ export default function StatsPage() {
                     <option value="true">true</option>
                     <option value="false">false</option>
                   </select>
+                ) : worldStateForm.valueType === "array" ? (
+                  <textarea
+                    value={worldStateForm.value}
+                    onChange={(e) => setWorldStateForm((prev) => ({ ...prev, value: e.target.value }))}
+                    placeholder='["item1", "item2"]'
+                    className="w-full px-4 py-2 bg-slate-700 rounded text-white font-mono text-sm"
+                    rows={3}
+                    required
+                  />
                 ) : (
                   <input
                     type={worldStateForm.valueType === "number" ? "number" : "text"}
@@ -436,7 +623,16 @@ export default function StatsPage() {
               <div key={item.id} className="bg-slate-700/50 p-4 rounded flex justify-between items-center">
                 <div>
                   <p className="font-semibold text-lg">{item.key}</p>
-                  <p className="text-slate-400 text-sm">{item.valueType}: {item.value}</p>
+                  <p className="text-slate-400 text-sm">
+                    <span className="font-mono">{item.valueType}</span>: {item.valueType === "array" ? "[...]" : item.value}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void openReferences("world_state", item.key)}
+                    className="mt-1 text-xs text-sky-300 hover:text-sky-200"
+                  >
+                    Vinculaciones: {summaryFor("world_state", item.key).cardsCount} cartas · {summaryFor("world_state", item.key).decksCount} decks
+                  </button>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => handleEditWorldState(item)} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-2 rounded text-white text-sm">Editar</button>
@@ -447,6 +643,123 @@ export default function StatsPage() {
           )}
         </div>
       </section>
+
+      <section className="rounded bg-slate-800 p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold">Flags</h2>
+          <button
+            onClick={() => setShowFlagForm((prev) => !prev)}
+            className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white"
+          >
+            {showFlagForm ? "Cerrar" : "+ Nuevo Flag"}
+          </button>
+        </div>
+
+        {showFlagForm && (
+          <form onSubmit={handleSubmitFlag} className="space-y-4 rounded bg-slate-900/40 p-4">
+            <div>
+              <label className="block text-sm font-semibold mb-2">Key</label>
+              <input
+                type="text"
+                value={flagForm.key}
+                onChange={(e) => setFlagForm({ key: e.target.value })}
+                className="w-full px-4 py-2 bg-slate-700 rounded text-white"
+                required
+              />
+            </div>
+            <div className="flex gap-2">
+              <button type="submit" className="flex-1 bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-white">
+                {editingFlagId ? "Actualizar" : "Crear"}
+              </button>
+              <button type="button" onClick={resetFlagForm} className="flex-1 bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded text-white">
+                Cancelar
+              </button>
+            </div>
+          </form>
+        )}
+
+        <div className="space-y-3">
+          {flags.length === 0 ? (
+            <p className="text-slate-400">No hay flags definidos</p>
+          ) : (
+            flags.map((item) => (
+              <div key={item.id} className="bg-slate-700/50 p-4 rounded flex justify-between items-center">
+                <div>
+                  <p className="font-semibold text-lg">{item.key}</p>
+                  <button
+                    type="button"
+                    onClick={() => void openReferences("flag", item.key)}
+                    className="mt-1 text-xs text-sky-300 hover:text-sky-200"
+                  >
+                    Vinculaciones: {summaryFor("flag", item.key).cardsCount} cartas · {summaryFor("flag", item.key).decksCount} decks
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleEditFlag(item)} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-2 rounded text-white text-sm">Editar</button>
+                  <button onClick={() => handleDeleteFlag(item.id)} className="bg-red-600 hover:bg-red-700 px-3 py-2 rounded text-white text-sm">Eliminar</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {referencesModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-3xl rounded bg-slate-900 p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold">Vinculaciones de {referencesModal.type}</h3>
+                <p className="text-sm text-slate-300">{referencesModal.key}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReferencesModal((prev) => ({ ...prev, open: false }))}
+                className="rounded bg-slate-700 px-3 py-1 text-sm text-white hover:bg-slate-600"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {referencesModal.loading ? (
+              <p className="text-slate-300">Cargando...</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded bg-slate-800 p-3">
+                  <p className="mb-2 font-semibold">Cards ({referencesModal.cards.length})</p>
+                  <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                    {referencesModal.cards.length === 0 ? (
+                      <p className="text-sm text-slate-400">Sin cartas vinculadas</p>
+                    ) : (
+                      referencesModal.cards.map((card) => (
+                        <div key={card.id} className="rounded bg-slate-700 p-2 text-sm">
+                          <p className="font-semibold">{card.title}</p>
+                          <p className="text-xs text-slate-300">Deck: {card.deck.name}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded bg-slate-800 p-3">
+                  <p className="mb-2 font-semibold">Decks ({referencesModal.decks.length})</p>
+                  <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                    {referencesModal.decks.length === 0 ? (
+                      <p className="text-sm text-slate-400">Sin decks vinculados</p>
+                    ) : (
+                      referencesModal.decks.map((deck) => (
+                        <div key={deck.id} className="rounded bg-slate-700 p-2 text-sm font-semibold">
+                          {deck.name}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

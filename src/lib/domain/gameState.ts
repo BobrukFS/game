@@ -1,8 +1,9 @@
 export interface ActiveSequence {
   currentCardId: string
+  started?: boolean
 }
 
-export type WorldStateValue = number | string | boolean
+export type WorldStateValue = number | string | boolean | string[]
 
 export type WorldStateMap = Record<string, WorldStateValue>
 
@@ -24,6 +25,8 @@ export interface GameState {
   turn?: number
   world: WorldStateMap
   completedDecks: string[]
+  enabledDeckIds?: string[]
+  seenCardsByDeck?: Record<string, string[]>
   history: {
     cardId: string
     optionId: string

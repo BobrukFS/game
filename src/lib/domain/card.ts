@@ -1,4 +1,4 @@
-import { Condition } from "./conditions"
+import { Condition, ConditionGroup } from "./conditions"
 import { Option } from "./option"
 
 export type CardType = "decision" | "narrative" | "interactive";
@@ -10,7 +10,7 @@ export interface Card {
   description: string
   type: CardType
   priority?: number
-  conditions: Condition[]
+  conditions: Condition[] | ConditionGroup[]
   options?: [Option, Option]
   tags: string[]
   createdAt?: string

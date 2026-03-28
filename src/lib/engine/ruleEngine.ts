@@ -7,6 +7,21 @@ export interface RuntimeRuleEvent {
   optionId?: string
   statKey?: string
   worldKey?: string
+  counterKey?: string
+}
+
+export interface RuntimeRuleTraceEntry {
+  event: RuntimeRuleEvent
+  source: "input" | "action"
+  viaRuleId?: string
+  viaActionType?: GameRuleAction["type"]
+}
+
+interface QueuedRuntimeRuleEvent {
+  event: RuntimeRuleEvent
+  source: "input" | "action"
+  viaRuleId?: string
+  viaActionType?: GameRuleAction["type"]
 }
 
 function compareValues(left: number, operator: RuleOperator, right: number) {
@@ -50,6 +65,7 @@ function ruleMatchesEvent(rule: InteractionRule, event: RuntimeRuleEvent) {
 
   if (filters.statKey && filters.statKey !== event.statKey) return false
   if (filters.worldKey && filters.worldKey !== event.worldKey) return false
+  if (filters.counterKey && filters.counterKey !== event.counterKey) return false
   if (filters.cardId && filters.cardId !== event.cardId) return false
   if (filters.optionId && filters.optionId !== event.optionId) return false
 
@@ -125,22 +141,74 @@ function applyRuleAction(state: GameState, action: GameRuleAction) {
   }
 }
 
+function applyRuleActionWithEvents(
+  state: GameState,
+  action: GameRuleAction,
+  eventQueue: QueuedRuntimeRuleEvent[],
+  sourceRuleId: string
+) {
+  const nextState = applyRuleAction(state, action)
+
+  if (action.type === "increment_counter") {
+    eventQueue.push({
+      event: {
+        type: "counter_changed",
+        counterKey: action.key,
+      },
+      source: "action",
+      viaRuleId: sourceRuleId,
+      viaActionType: action.type,
+    })
+  }
+
+  return nextState
+}
+
 export function applyGameLogicEvent(
   state: GameState,
   config: GameLogicConfig | undefined,
-  event: RuntimeRuleEvent
+  event: RuntimeRuleEvent,
+  traceCollector?: RuntimeRuleTraceEntry[]
 ): GameState {
   const normalized = normalizeInteractionState(state)
   if (!config) return normalized
 
-  let nextState = normalized
-  for (const rule of config.rules || []) {
-    if (!ruleMatchesEvent(rule, event)) continue
-    if (!ruleMatchesCounterCondition(rule, nextState)) continue
+  const rules = config.rules || []
+  if (rules.length === 0) return normalized
 
-    for (const action of rule.actions || []) {
-      nextState = applyRuleAction(nextState, action)
+  let nextState = normalized
+  const eventQueue: QueuedRuntimeRuleEvent[] = [
+    {
+      event,
+      source: "input",
+    },
+  ]
+  let processedEvents = 0
+  const MAX_RULE_EVENTS = 100
+
+  while (eventQueue.length > 0 && processedEvents < MAX_RULE_EVENTS) {
+    const currentEvent = eventQueue.shift()!
+    processedEvents += 1
+
+    traceCollector?.push({
+      event: currentEvent.event,
+      source: currentEvent.source,
+      viaRuleId: currentEvent.viaRuleId,
+      viaActionType: currentEvent.viaActionType,
+    })
+
+    for (const rule of rules) {
+      if (!ruleMatchesEvent(rule, currentEvent.event)) continue
+      if (!ruleMatchesCounterCondition(rule, nextState)) continue
+
+      for (const action of rule.actions || []) {
+        nextState = applyRuleActionWithEvents(nextState, action, eventQueue, rule.id)
+      }
     }
+  }
+
+  if (processedEvents >= MAX_RULE_EVENTS) {
+    console.warn("Rule engine reached max event iterations. Possible recursive rule loop.")
   }
 
   return nextState
@@ -149,11 +217,12 @@ export function applyGameLogicEvent(
 export function applyGameLogicEvents(
   state: GameState,
   config: GameLogicConfig | undefined,
-  events: RuntimeRuleEvent[]
+  events: RuntimeRuleEvent[],
+  traceCollector?: RuntimeRuleTraceEntry[]
 ): GameState {
   let nextState = normalizeInteractionState(state)
   for (const event of events) {
-    nextState = applyGameLogicEvent(nextState, config, event)
+    nextState = applyGameLogicEvent(nextState, config, event, traceCollector)
   }
   return nextState
 }

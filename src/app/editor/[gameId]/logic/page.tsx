@@ -16,6 +16,7 @@ import {
   RuleOperator,
   RuleTriggerType,
   SelectionConditionSource,
+  SelectionConstraintOccurrenceMode,
   SelectionConstraintRule,
   SelectionWeightRule,
   SelectionWeightTargetType,
@@ -42,19 +43,21 @@ const EVENT_OPTIONS: RuleTriggerType[] = [
   "card_shown",
   "option_resolved",
   "stat_changed",
+  "counter_changed",
   "sequence_started",
   "sequence_completed",
   "sequence_paused",
 ]
 
-const EVENT_FILTER_SUPPORT: Record<RuleTriggerType, { statKey: boolean; worldKey: boolean }> = {
-  any: { statKey: false, worldKey: false },
-  card_shown: { statKey: false, worldKey: false },
-  option_resolved: { statKey: false, worldKey: false },
-  stat_changed: { statKey: true, worldKey: false },
-  sequence_started: { statKey: false, worldKey: false },
-  sequence_completed: { statKey: false, worldKey: false },
-  sequence_paused: { statKey: false, worldKey: true },
+const EVENT_FILTER_SUPPORT: Record<RuleTriggerType, { statKey: boolean; worldKey: boolean; counterKey: boolean }> = {
+  any: { statKey: false, worldKey: false, counterKey: false },
+  card_shown: { statKey: false, worldKey: false, counterKey: false },
+  option_resolved: { statKey: false, worldKey: false, counterKey: false },
+  stat_changed: { statKey: true, worldKey: false, counterKey: false },
+  counter_changed: { statKey: false, worldKey: false, counterKey: true },
+  sequence_started: { statKey: false, worldKey: false, counterKey: false },
+  sequence_completed: { statKey: false, worldKey: false, counterKey: false },
+  sequence_paused: { statKey: false, worldKey: true, counterKey: false },
 }
 
 function compareByOperator(left: number, operator: RuleOperator, right: number) {
@@ -120,6 +123,7 @@ export default function LogicPage() {
     value: 1,
     filterStatKey: "",
     filterWorldKey: "",
+    filterCounterKey: "",
     actionType: "increment_counter" as
       | "increment_counter"
       | "set_world_state"
@@ -144,6 +148,10 @@ export default function LogicPage() {
   const [constraintRuleForm, setConstraintRuleForm] = useState({
     targetType: "deck_type" as SelectionWeightTargetType,
     targetKey: "",
+    maxOccurrences: 1,
+    scope: "cycle" as "cycle" | "global",
+    scopeWorldKey: "world.cycle",
+    occurrenceMode: "count_matches" as SelectionConstraintOccurrenceMode,
     blockCounterKey: "",
     blockCounterOperator: "gte" as RuleOperator,
     blockCounterValue: 1,
@@ -157,6 +165,13 @@ export default function LogicPage() {
     key: "",
     value: "",
   })
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
+  const [expandedWeightRuleId, setExpandedWeightRuleId] = useState<string | null>(null)
+  const [editingWeightRuleId, setEditingWeightRuleId] = useState<string | null>(null)
+  const [weightRuleDraft, setWeightRuleDraft] = useState<SelectionWeightRule | null>(null)
+  const [expandedConstraintRuleId, setExpandedConstraintRuleId] = useState<string | null>(null)
+  const [editingConstraintRuleId, setEditingConstraintRuleId] = useState<string | null>(null)
+  const [constraintRuleDraft, setConstraintRuleDraft] = useState<SelectionConstraintRule | null>(null)
 
   useEffect(() => {
     void loadLogic()
@@ -293,6 +308,11 @@ export default function LogicPage() {
       return
     }
 
+    if (ruleForm.trigger === "counter_changed" && !ruleForm.filterCounterKey.trim()) {
+      setFeedback("Para evento counter_changed debes definir filtro Counter Key")
+      return
+    }
+
     const action =
       ruleForm.actionType === "increment_counter"
         ? {
@@ -340,11 +360,12 @@ export default function LogicPage() {
     }
 
     const rule: InteractionRule = {
-      id: `rule-${Date.now()}`,
+      id: editingRuleId || `rule-${Date.now()}`,
       trigger: ruleForm.trigger,
       filters: {
         statKey: ruleForm.filterStatKey.trim() || undefined,
         worldKey: ruleForm.filterWorldKey.trim() || undefined,
+        counterKey: ruleForm.filterCounterKey.trim() || undefined,
       },
       when: {
         counterKey,
@@ -354,7 +375,11 @@ export default function LogicPage() {
       actions: [action],
     }
 
-    await persistLogic(logicCounters, [...logicRules, rule])
+    const nextRules = editingRuleId
+      ? logicRules.map((existingRule) => (existingRule.id === editingRuleId ? rule : existingRule))
+      : [...logicRules, rule]
+
+    await persistLogic(logicCounters, nextRules)
     setRuleForm({
       trigger: "option_resolved",
       counterKey: "",
@@ -362,10 +387,66 @@ export default function LogicPage() {
       value: 1,
       filterStatKey: "",
       filterWorldKey: "",
+      filterCounterKey: "",
       actionType: "increment_counter",
       actionKey: "",
       actionValue: "",
     })
+    setEditingRuleId(null)
+  }
+
+  function startEditRule(rule: InteractionRule) {
+    if (!rule.actions?.length) {
+      setFeedback("No se puede editar una regla sin acciones")
+      return
+    }
+
+    if (rule.actions.length > 1) {
+      setFeedback("La edicion desde UI solo soporta reglas con una accion")
+      return
+    }
+
+    const action = rule.actions[0]
+    const actionType = action.type
+    const actionKey = action.key
+    const actionValue =
+      actionType === "increment_counter" || actionType === "increment_world_state" || actionType === "modify_stat"
+        ? String(action.amount ?? 1)
+        : actionType === "set_world_state"
+          ? String(action.value)
+          : String(action.value)
+
+    setEditingRuleId(rule.id)
+    setRuleForm({
+      trigger: rule.trigger || "any",
+      counterKey: rule.when.counterKey,
+      operator: rule.when.operator,
+      value: Number(rule.when.value),
+      filterStatKey: rule.filters?.statKey || "",
+      filterWorldKey: rule.filters?.worldKey || "",
+      filterCounterKey: rule.filters?.counterKey || "",
+      actionType,
+      actionKey,
+      actionValue,
+    })
+    setFeedback("")
+  }
+
+  function cancelEditRule() {
+    setEditingRuleId(null)
+    setRuleForm({
+      trigger: "option_resolved",
+      counterKey: "",
+      operator: "gte",
+      value: 1,
+      filterStatKey: "",
+      filterWorldKey: "",
+      filterCounterKey: "",
+      actionType: "increment_counter",
+      actionKey: "",
+      actionValue: "",
+    })
+    setFeedback("")
   }
 
   async function handleDeleteRule(ruleId: string) {
@@ -448,6 +529,74 @@ export default function LogicPage() {
     )
   }
 
+  function normalizeSelectionConditionValue(
+    source: SelectionConditionSource,
+    rawValue: string | number | boolean
+  ): string | number | boolean {
+    if (source === "counter" || source === "stat") {
+      const n = Number(rawValue)
+      return Number.isFinite(n) ? n : 0
+    }
+
+    if (source === "flag") {
+      if (typeof rawValue === "boolean") return rawValue
+      return String(rawValue).toLowerCase() === "true"
+    }
+
+    return String(rawValue)
+  }
+
+  function startEditWeightRule(rule: SelectionWeightRule) {
+    setExpandedWeightRuleId(rule.id)
+    setEditingWeightRuleId(rule.id)
+    setWeightRuleDraft(JSON.parse(JSON.stringify(rule)) as SelectionWeightRule)
+  }
+
+  function cancelEditWeightRule() {
+    setEditingWeightRuleId(null)
+    setWeightRuleDraft(null)
+  }
+
+  async function saveEditWeightRule() {
+    if (!editingWeightRuleId || !weightRuleDraft) return
+
+    const normalizedConditions = (weightRuleDraft.conditions || [])
+      .filter((condition) => condition.source && condition.key?.trim())
+      .map((condition) => ({
+        ...condition,
+        key: condition.key.trim(),
+        value: normalizeSelectionConditionValue(
+          condition.source,
+          condition.value as string | number | boolean
+        ),
+      }))
+
+    const nextRule: SelectionWeightRule = {
+      ...weightRuleDraft,
+      targetKey: weightRuleDraft.targetKey.trim(),
+      value: Number(weightRuleDraft.value),
+      conditions: normalizedConditions.length > 0 ? normalizedConditions : undefined,
+    }
+
+    if (!nextRule.targetKey) {
+      setFeedback("Target key no puede estar vacio")
+      return
+    }
+
+    if (!Number.isFinite(nextRule.value)) {
+      setFeedback("Valor invalido en regla de peso")
+      return
+    }
+
+    const nextWeightRules = logicWeightRules.map((rule) =>
+      rule.id === editingWeightRuleId ? nextRule : rule
+    )
+
+    await persistLogic(logicCounters, logicRules, nextWeightRules)
+    setEditingWeightRuleId(null)
+    setWeightRuleDraft(null)
+  }
+
   async function handleAddConstraintRule(e: React.FormEvent) {
     e.preventDefault()
 
@@ -457,8 +606,11 @@ export default function LogicPage() {
       return
     }
 
-    if (!constraintRuleForm.blockCounterKey.trim()) {
-      setFeedback("La regla de restriccion requiere Block Counter Key")
+    const hasCounterCondition = !!constraintRuleForm.blockCounterKey.trim()
+    const hasMaxOccurrences = Number.isFinite(constraintRuleForm.maxOccurrences)
+
+    if (!hasCounterCondition && !hasMaxOccurrences) {
+      setFeedback("La regla de restriccion requiere block counter o maxOccurrences")
       return
     }
 
@@ -466,11 +618,20 @@ export default function LogicPage() {
       id: `constraint-${Date.now()}`,
       targetType: constraintRuleForm.targetType,
       targetKey,
-      counterCondition: {
-        counterKey: constraintRuleForm.blockCounterKey.trim(),
-        operator: constraintRuleForm.blockCounterOperator,
-        value: Number(constraintRuleForm.blockCounterValue),
-      },
+      maxOccurrences: hasMaxOccurrences ? Number(constraintRuleForm.maxOccurrences) : undefined,
+      scope: constraintRuleForm.scope,
+      scopeWorldKey:
+        constraintRuleForm.scope === "cycle"
+          ? constraintRuleForm.scopeWorldKey.trim() || undefined
+          : undefined,
+      occurrenceMode: constraintRuleForm.occurrenceMode,
+      counterCondition: hasCounterCondition
+        ? {
+            counterKey: constraintRuleForm.blockCounterKey.trim(),
+            operator: constraintRuleForm.blockCounterOperator,
+            value: Number(constraintRuleForm.blockCounterValue),
+          }
+        : undefined,
       whenCounter: constraintRuleForm.whenCounterKey.trim()
         ? {
             counterKey: constraintRuleForm.whenCounterKey.trim(),
@@ -485,6 +646,10 @@ export default function LogicPage() {
     setConstraintRuleForm({
       targetType: "deck_type",
       targetKey: "",
+      maxOccurrences: 1,
+      scope: "cycle",
+      scopeWorldKey: "world.cycle",
+      occurrenceMode: "count_matches",
       blockCounterKey: "",
       blockCounterOperator: "gte",
       blockCounterValue: 1,
@@ -501,6 +666,69 @@ export default function LogicPage() {
       logicWeightRules,
       logicConstraintRules.filter((rule) => rule.id !== ruleId)
     )
+  }
+
+  function startEditConstraintRule(rule: SelectionConstraintRule) {
+    setExpandedConstraintRuleId(rule.id)
+    setEditingConstraintRuleId(rule.id)
+    setConstraintRuleDraft(JSON.parse(JSON.stringify(rule)) as SelectionConstraintRule)
+  }
+
+  function cancelEditConstraintRule() {
+    setEditingConstraintRuleId(null)
+    setConstraintRuleDraft(null)
+  }
+
+  async function saveEditConstraintRule() {
+    if (!editingConstraintRuleId || !constraintRuleDraft) return
+
+    const normalizedRule: SelectionConstraintRule = {
+      ...constraintRuleDraft,
+      targetKey: (constraintRuleDraft.targetKey || "").trim(),
+      maxOccurrences:
+        typeof constraintRuleDraft.maxOccurrences === "number" &&
+        Number.isFinite(constraintRuleDraft.maxOccurrences)
+          ? Number(constraintRuleDraft.maxOccurrences)
+          : undefined,
+      scopeWorldKey: constraintRuleDraft.scopeWorldKey?.trim() || undefined,
+      counterCondition: constraintRuleDraft.counterCondition?.counterKey?.trim()
+        ? {
+            counterKey: constraintRuleDraft.counterCondition.counterKey.trim(),
+            operator: constraintRuleDraft.counterCondition.operator,
+            value: Number(constraintRuleDraft.counterCondition.value),
+          }
+        : undefined,
+      whenCounter: constraintRuleDraft.whenCounter?.counterKey?.trim()
+        ? {
+            counterKey: constraintRuleDraft.whenCounter.counterKey.trim(),
+            operator: constraintRuleDraft.whenCounter.operator,
+            value: Number(constraintRuleDraft.whenCounter.value),
+          }
+        : undefined,
+    }
+
+    if (!normalizedRule.targetKey) {
+      setFeedback("Target key no puede estar vacio")
+      return
+    }
+
+    const hasCounterCondition =
+      !!normalizedRule.counterCondition && Number.isFinite(normalizedRule.counterCondition.value)
+    const hasMaxOccurrences =
+      typeof normalizedRule.maxOccurrences === "number" && Number.isFinite(normalizedRule.maxOccurrences)
+
+    if (!hasCounterCondition && !hasMaxOccurrences) {
+      setFeedback("La regla requiere counterCondition o maxOccurrences")
+      return
+    }
+
+    const nextConstraintRules = logicConstraintRules.map((rule) =>
+      rule.id === editingConstraintRuleId ? normalizedRule : rule
+    )
+
+    await persistLogic(logicCounters, logicRules, logicWeightRules, nextConstraintRules)
+    setEditingConstraintRuleId(null)
+    setConstraintRuleDraft(null)
   }
 
   const selectionCounters = logicCounters.filter((counter) => PROTECTED_COUNTER_KEYS.includes(counter.key))
@@ -558,6 +786,7 @@ export default function LogicPage() {
 
   const supportsStatFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.statKey
   const supportsWorldFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.worldKey
+  const supportsCounterFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.counterKey
 
   const actionKeyOptions =
     ruleForm.actionType === "increment_counter"
@@ -706,6 +935,8 @@ export default function LogicPage() {
             >
               <option value="deck_type">deck_type</option>
               <option value="deck_id">deck_id</option>
+              <option value="card_type">card_type</option>
+              <option value="card_id">card_id</option>
             </select>
           </div>
           <div>
@@ -808,20 +1039,259 @@ export default function LogicPage() {
             <p className="text-sm text-slate-400">Sin reglas de peso.</p>
           ) : (
             logicWeightRules.map((rule) => (
-              <div key={rule.id} className="rounded bg-slate-700/50 p-3 flex items-start justify-between gap-3">
-                <div className="text-sm">
-                  <p className="font-semibold">{rule.targetType}:{rule.targetKey} · {rule.operation} {rule.value}</p>
+              <div key={rule.id} className="rounded bg-slate-700/50 p-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedWeightRuleId((prev) => (prev === rule.id ? null : rule.id))
+                  }
+                  className="w-full text-left"
+                >
+                  <p className="text-sm font-semibold">{rule.targetType}:{rule.targetKey} · {rule.operation} {rule.value}</p>
                   {rule.conditions && rule.conditions.length > 0 ? (
                     <p className="text-xs text-slate-400">
-                      condicion: {rule.conditions[0].source}:{rule.conditions[0].key} {rule.conditions[0].operator} {String(rule.conditions[0].value)}
+                      condiciones: {rule.conditions.length}
                     </p>
                   ) : (
-                    <p className="text-xs text-amber-300">regla legacy sin condicion generica</p>
+                    <p className="text-xs text-amber-300">sin condiciones genericas</p>
                   )}
-                </div>
-                <button onClick={() => void handleDeleteWeightRule(rule.id)} className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700">
-                  Eliminar
                 </button>
+
+                {expandedWeightRuleId === rule.id && (
+                  <div className="mt-3 space-y-3 border-t border-slate-600 pt-3">
+                    {editingWeightRuleId === rule.id && weightRuleDraft ? (
+                      <>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <select
+                            value={weightRuleDraft.targetType}
+                            onChange={(e) =>
+                              setWeightRuleDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      targetType: e.target.value as SelectionWeightTargetType,
+                                    }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                          >
+                            <option value="deck_type">deck_type</option>
+                            <option value="deck_id">deck_id</option>
+                            <option value="card_type">card_type</option>
+                            <option value="card_id">card_id</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={weightRuleDraft.targetKey}
+                            onChange={(e) =>
+                              setWeightRuleDraft((prev) =>
+                                prev ? { ...prev, targetKey: e.target.value } : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                            placeholder="target key"
+                          />
+                          <select
+                            value={weightRuleDraft.operation}
+                            onChange={(e) =>
+                              setWeightRuleDraft((prev) =>
+                                prev
+                                  ? { ...prev, operation: e.target.value as "add" | "multiply" | "set" }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                          >
+                            <option value="multiply">multiply</option>
+                            <option value="add">add</option>
+                            <option value="set">set</option>
+                          </select>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={weightRuleDraft.value}
+                            onChange={(e) =>
+                              setWeightRuleDraft((prev) =>
+                                prev ? { ...prev, value: Number(e.target.value) } : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                          />
+                        </div>
+
+                        <div className="space-y-2 rounded bg-slate-900/50 p-2">
+                          <p className="text-xs font-semibold text-slate-300">Condiciones</p>
+                          {(weightRuleDraft.conditions || []).length === 0 && (
+                            <p className="text-xs text-slate-400">Sin condiciones.</p>
+                          )}
+                          {(weightRuleDraft.conditions || []).map((condition, index) => (
+                            <div key={`${rule.id}-cond-${index}`} className="grid gap-2 md:grid-cols-5">
+                              <select
+                                value={condition.source}
+                                onChange={(e) =>
+                                  setWeightRuleDraft((prev) => {
+                                    if (!prev) return prev
+                                    const nextConditions = [...(prev.conditions || [])]
+                                    nextConditions[index] = {
+                                      ...nextConditions[index],
+                                      source: e.target.value as SelectionConditionSource,
+                                    }
+                                    return { ...prev, conditions: nextConditions }
+                                  })
+                                }
+                                className="rounded bg-slate-700 px-2 py-2 text-white"
+                              >
+                                <option value="counter">counter</option>
+                                <option value="stat">stat</option>
+                                <option value="world">world</option>
+                                <option value="flag">flag</option>
+                                <option value="deck">deck</option>
+                                <option value="card">card</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={condition.key}
+                                onChange={(e) =>
+                                  setWeightRuleDraft((prev) => {
+                                    if (!prev) return prev
+                                    const nextConditions = [...(prev.conditions || [])]
+                                    nextConditions[index] = {
+                                      ...nextConditions[index],
+                                      key: e.target.value,
+                                    }
+                                    return { ...prev, conditions: nextConditions }
+                                  })
+                                }
+                                className="rounded bg-slate-700 px-2 py-2 text-white"
+                                placeholder="key"
+                              />
+                              <select
+                                value={condition.operator}
+                                onChange={(e) =>
+                                  setWeightRuleDraft((prev) => {
+                                    if (!prev) return prev
+                                    const nextConditions = [...(prev.conditions || [])]
+                                    nextConditions[index] = {
+                                      ...nextConditions[index],
+                                      operator: e.target.value as RuleOperator,
+                                    }
+                                    return { ...prev, conditions: nextConditions }
+                                  })
+                                }
+                                className="rounded bg-slate-700 px-2 py-2 text-white"
+                              >
+                                <option value="eq">eq</option>
+                                <option value="gt">gt</option>
+                                <option value="gte">gte</option>
+                                <option value="lt">lt</option>
+                                <option value="lte">lte</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={String(condition.value)}
+                                onChange={(e) =>
+                                  setWeightRuleDraft((prev) => {
+                                    if (!prev) return prev
+                                    const nextConditions = [...(prev.conditions || [])]
+                                    nextConditions[index] = {
+                                      ...nextConditions[index],
+                                      value: e.target.value,
+                                    }
+                                    return { ...prev, conditions: nextConditions }
+                                  })
+                                }
+                                className="rounded bg-slate-700 px-2 py-2 text-white"
+                                placeholder="value"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setWeightRuleDraft((prev) => {
+                                    if (!prev) return prev
+                                    const nextConditions = [...(prev.conditions || [])]
+                                    nextConditions.splice(index, 1)
+                                    return { ...prev, conditions: nextConditions }
+                                  })
+                                }
+                                className="rounded bg-red-700 px-2 py-2 text-xs text-white hover:bg-red-800"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setWeightRuleDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      conditions: [
+                                        ...(prev.conditions || []),
+                                        {
+                                          source: "counter",
+                                          key: "",
+                                          operator: "eq",
+                                          value: 0,
+                                        },
+                                      ],
+                                    }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-600 px-3 py-1 text-xs text-white hover:bg-slate-500"
+                          >
+                            + Condicion
+                          </button>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void saveEditWeightRule()}
+                            className="rounded bg-emerald-600 px-3 py-1 text-xs text-white hover:bg-emerald-700"
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditWeightRule}
+                            className="rounded bg-slate-600 px-3 py-1 text-xs text-white hover:bg-slate-500"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-1 text-xs text-slate-300">
+                          {(rule.conditions || []).length > 0 ? (
+                            (rule.conditions || []).map((condition, index) => (
+                              <p key={`${rule.id}-view-cond-${index}`}>
+                                {index + 1}. {condition.source}:{condition.key} {condition.operator} {String(condition.value)}
+                              </p>
+                            ))
+                          ) : (
+                            <p>Sin condiciones.</p>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => startEditWeightRule(rule)}
+                            className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                          >
+                            Editar
+                          </button>
+                          <button onClick={() => void handleDeleteWeightRule(rule.id)} className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700">
+                            Eliminar
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -862,12 +1332,65 @@ export default function LogicPage() {
           </div>
 
           <div>
+            <label className="mb-1 block text-sm font-semibold">Max Occurrences (opcional)</label>
+            <input
+              type="number"
+              min={0}
+              value={constraintRuleForm.maxOccurrences}
+              onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, maxOccurrences: Number(e.target.value) }))}
+              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-semibold">Occurrence Mode</label>
+            <select
+              value={constraintRuleForm.occurrenceMode}
+              onChange={(e) =>
+                setConstraintRuleForm((prev) => ({
+                  ...prev,
+                  occurrenceMode: e.target.value as SelectionConstraintOccurrenceMode,
+                }))
+              }
+              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+            >
+              <option value="count_matches">count_matches</option>
+              <option value="count_unique_targets">count_unique_targets</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-semibold">Scope</label>
+            <select
+              value={constraintRuleForm.scope}
+              onChange={(e) =>
+                setConstraintRuleForm((prev) => ({
+                  ...prev,
+                  scope: e.target.value as "cycle" | "global",
+                }))
+              }
+              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+            >
+              <option value="cycle">cycle</option>
+              <option value="global">global</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-semibold">Scope World Key (cycle)</label>
+            <input
+              type="text"
+              value={constraintRuleForm.scopeWorldKey}
+              onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, scopeWorldKey: e.target.value }))}
+              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+              disabled={constraintRuleForm.scope !== "cycle"}
+            />
+          </div>
+
+          <div>
             <label className="mb-1 block text-sm font-semibold">Block Counter Key</label>
             <select
               value={constraintRuleForm.blockCounterKey}
               onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, blockCounterKey: e.target.value }))}
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-              required
             >
               <option value="">Selecciona counter</option>
               {logicCounters.map((counter) => (
@@ -942,23 +1465,299 @@ export default function LogicPage() {
             <p className="text-sm text-slate-400">Sin reglas de restriccion.</p>
           ) : (
             logicConstraintRules.map((rule) => (
-              <div key={rule.id} className="rounded bg-slate-700/50 p-3 flex items-start justify-between gap-3">
-                <div className="text-sm">
-                  <p className="font-semibold">{rule.targetType}:{rule.targetKey}</p>
-                  {rule.counterCondition && (
-                    <p className="text-xs text-slate-400">
-                      bloquea cuando: {rule.counterCondition.counterKey} {rule.counterCondition.operator} {rule.counterCondition.value}
-                    </p>
-                  )}
-                  {rule.whenCounter && (
-                    <p className="text-xs text-slate-400">
-                      when: {rule.whenCounter.counterKey} {rule.whenCounter.operator} {rule.whenCounter.value}
-                    </p>
-                  )}
-                </div>
-                <button onClick={() => void handleDeleteConstraintRule(rule.id)} className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700">
-                  Eliminar
+              <div key={rule.id} className="rounded bg-slate-700/50 p-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedConstraintRuleId((prev) => (prev === rule.id ? null : rule.id))
+                  }
+                  className="w-full text-left"
+                >
+                  <p className="text-sm font-semibold">{rule.targetType}:{rule.targetKey}</p>
+                  <p className="text-xs text-slate-400">
+                    {rule.counterCondition
+                      ? `bloquea: ${rule.counterCondition.counterKey} ${rule.counterCondition.operator} ${rule.counterCondition.value}`
+                      : "sin counterCondition"}
+                  </p>
                 </button>
+
+                {expandedConstraintRuleId === rule.id && (
+                  <div className="mt-3 space-y-3 border-t border-slate-600 pt-3">
+                    {editingConstraintRuleId === rule.id && constraintRuleDraft ? (
+                      <>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <select
+                            value={constraintRuleDraft.targetType}
+                            onChange={(e) =>
+                              setConstraintRuleDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      targetType: e.target.value as SelectionWeightTargetType,
+                                    }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                          >
+                            <option value="deck_type">deck_type</option>
+                            <option value="deck_id">deck_id</option>
+                            <option value="card_type">card_type</option>
+                            <option value="card_id">card_id</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={constraintRuleDraft.targetKey}
+                            onChange={(e) =>
+                              setConstraintRuleDraft((prev) =>
+                                prev ? { ...prev, targetKey: e.target.value } : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                            placeholder="target key"
+                          />
+
+                          <input
+                            type="text"
+                            value={constraintRuleDraft.counterCondition?.counterKey || ""}
+                            onChange={(e) =>
+                              setConstraintRuleDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      counterCondition: {
+                                        counterKey: e.target.value,
+                                        operator: prev.counterCondition?.operator || "gte",
+                                        value: Number(prev.counterCondition?.value || 1),
+                                      },
+                                    }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                            placeholder="block counter key"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={constraintRuleDraft.counterCondition?.operator || "gte"}
+                              onChange={(e) =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        counterCondition: {
+                                          counterKey: prev.counterCondition?.counterKey || "",
+                                          operator: e.target.value as RuleOperator,
+                                          value: Number(prev.counterCondition?.value || 1),
+                                        },
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="rounded bg-slate-700 px-3 py-2 text-white"
+                            >
+                              <option value="eq">eq</option>
+                              <option value="gt">gt</option>
+                              <option value="gte">gte</option>
+                              <option value="lt">lt</option>
+                              <option value="lte">lte</option>
+                            </select>
+                            <input
+                              type="number"
+                              value={Number(constraintRuleDraft.counterCondition?.value || 1)}
+                              onChange={(e) =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        counterCondition: {
+                                          counterKey: prev.counterCondition?.counterKey || "",
+                                          operator: prev.counterCondition?.operator || "gte",
+                                          value: Number(e.target.value),
+                                        },
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="rounded bg-slate-700 px-3 py-2 text-white"
+                            />
+                          </div>
+
+                          <input
+                            type="text"
+                            value={constraintRuleDraft.whenCounter?.counterKey || ""}
+                            onChange={(e) =>
+                              setConstraintRuleDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      whenCounter: e.target.value
+                                        ? {
+                                            counterKey: e.target.value,
+                                            operator: prev.whenCounter?.operator || "gte",
+                                            value: Number(prev.whenCounter?.value || 1),
+                                          }
+                                        : undefined,
+                                    }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                            placeholder="when counter key (opcional)"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={constraintRuleDraft.whenCounter?.operator || "gte"}
+                              onChange={(e) =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        whenCounter: prev.whenCounter
+                                          ? {
+                                              ...prev.whenCounter,
+                                              operator: e.target.value as RuleOperator,
+                                            }
+                                          : undefined,
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="rounded bg-slate-700 px-3 py-2 text-white"
+                              disabled={!constraintRuleDraft.whenCounter}
+                            >
+                              <option value="eq">eq</option>
+                              <option value="gt">gt</option>
+                              <option value="gte">gte</option>
+                              <option value="lt">lt</option>
+                              <option value="lte">lte</option>
+                            </select>
+                            <input
+                              type="number"
+                              value={Number(constraintRuleDraft.whenCounter?.value || 1)}
+                              onChange={(e) =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        whenCounter: prev.whenCounter
+                                          ? {
+                                              ...prev.whenCounter,
+                                              value: Number(e.target.value),
+                                            }
+                                          : undefined,
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="rounded bg-slate-700 px-3 py-2 text-white"
+                              disabled={!constraintRuleDraft.whenCounter}
+                            />
+                          </div>
+
+                          <input
+                            type="number"
+                            value={typeof constraintRuleDraft.maxOccurrences === "number" ? constraintRuleDraft.maxOccurrences : ""}
+                            onChange={(e) =>
+                              setConstraintRuleDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      maxOccurrences: e.target.value === "" ? undefined : Number(e.target.value),
+                                    }
+                                  : prev
+                              )
+                            }
+                            className="rounded bg-slate-700 px-3 py-2 text-white"
+                            placeholder="maxOccurrences (opcional)"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={constraintRuleDraft.scope || "cycle"}
+                              onChange={(e) =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        scope: e.target.value as "cycle" | "global",
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="rounded bg-slate-700 px-3 py-2 text-white"
+                            >
+                              <option value="cycle">cycle</option>
+                              <option value="global">global</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={constraintRuleDraft.scopeWorldKey || ""}
+                              onChange={(e) =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev ? { ...prev, scopeWorldKey: e.target.value } : prev
+                                )
+                              }
+                              className="rounded bg-slate-700 px-3 py-2 text-white"
+                              placeholder="scopeWorldKey"
+                              disabled={constraintRuleDraft.scope === "global"}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void saveEditConstraintRule()}
+                            className="rounded bg-emerald-600 px-3 py-1 text-xs text-white hover:bg-emerald-700"
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditConstraintRule}
+                            className="rounded bg-slate-600 px-3 py-1 text-xs text-white hover:bg-slate-500"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-1 text-xs text-slate-300">
+                          {rule.counterCondition ? (
+                            <p>
+                              bloquea: {rule.counterCondition.counterKey} {rule.counterCondition.operator} {rule.counterCondition.value}
+                            </p>
+                          ) : (
+                            <p>Sin counterCondition.</p>
+                          )}
+                          {rule.whenCounter && (
+                            <p>
+                              when: {rule.whenCounter.counterKey} {rule.whenCounter.operator} {rule.whenCounter.value}
+                            </p>
+                          )}
+                          {typeof rule.maxOccurrences === "number" && (
+                            <p>maxOccurrences: {rule.maxOccurrences}</p>
+                          )}
+                          {rule.scope && <p>scope: {rule.scope}</p>}
+                          {rule.scopeWorldKey && <p>scopeWorldKey: {rule.scopeWorldKey}</p>}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => startEditConstraintRule(rule)}
+                            className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                          >
+                            Editar
+                          </button>
+                          <button onClick={() => void handleDeleteConstraintRule(rule.id)} className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700">
+                            Eliminar
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -1007,7 +1806,7 @@ export default function LogicPage() {
         </form>
 
         <form onSubmit={handleAddRule} className="space-y-3 rounded bg-slate-800 p-4">
-          <h2 className="font-semibold">Nueva Regla</h2>
+          <h2 className="font-semibold">{editingRuleId ? "Editar Regla" : "Nueva Regla"}</h2>
           <div>
             <label className="mb-1 block text-sm font-semibold">Evento</label>
             <select
@@ -1063,7 +1862,7 @@ export default function LogicPage() {
             </div>
           </div>
 
-          {(supportsStatFilter || supportsWorldFilter) && (
+          {(supportsStatFilter || supportsWorldFilter || supportsCounterFilter) && (
             <div className="grid grid-cols-2 gap-3">
               {supportsStatFilter && (
                 <div>
@@ -1076,6 +1875,21 @@ export default function LogicPage() {
                     <option value="">Selecciona stat</option>
                     {statKeys.map((key) => (
                       <option key={key} value={key}>{key}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {supportsCounterFilter && (
+                <div>
+                  <label className="mb-1 block text-sm font-semibold">Filtro Counter Key</label>
+                  <select
+                    value={ruleForm.filterCounterKey}
+                    onChange={(e) => setRuleForm((prev) => ({ ...prev, filterCounterKey: e.target.value }))}
+                    className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                  >
+                    <option value="">Selecciona counter</option>
+                    {logicCounters.map((counter) => (
+                      <option key={counter.key} value={counter.key}>{counter.key}</option>
                     ))}
                   </select>
                 </div>
@@ -1167,7 +1981,20 @@ export default function LogicPage() {
             </div>
           </div>
 
-          <button type="submit" className="w-full rounded bg-green-600 px-4 py-2 text-white hover:bg-green-700">Agregar regla</button>
+          <div className="flex gap-2">
+            <button type="submit" className="w-full rounded bg-green-600 px-4 py-2 text-white hover:bg-green-700">
+              {editingRuleId ? "Guardar cambios" : "Agregar regla"}
+            </button>
+            {editingRuleId && (
+              <button
+                type="button"
+                onClick={cancelEditRule}
+                className="rounded bg-slate-600 px-4 py-2 text-white hover:bg-slate-500"
+              >
+                Cancelar
+              </button>
+            )}
+          </div>
         </form>
       </div>
 
@@ -1210,12 +2037,20 @@ export default function LogicPage() {
                   <p className="font-semibold">{rule.when.counterKey} {rule.when.operator} {rule.when.value}</p>
                   <p className="text-xs text-slate-400">acciones: {rule.actions.length}</p>
                 </div>
-                <button
-                  onClick={() => void handleDeleteRule(rule.id)}
-                  className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
-                >
-                  Eliminar
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => startEditRule(rule)}
+                    className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    onClick={() => void handleDeleteRule(rule.id)}
+                    className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </div>
             ))
           )}

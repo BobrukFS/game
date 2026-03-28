@@ -29,6 +29,48 @@ export async function getFlagKeysByGameId(gameId: string) {
   })
 }
 
+export async function getOptionGameContext(optionId: string) {
+  return prisma.option.findUnique({
+    where: { id: optionId },
+    select: {
+      id: true,
+      card: {
+        select: {
+          deck: {
+            select: {
+              gameId: true,
+            },
+          },
+        },
+      },
+    },
+  })
+}
+
+export async function getEffectGameContext(effectId: string) {
+  return prisma.effect.findUnique({
+    where: { id: effectId },
+    select: {
+      id: true,
+      type: true,
+      key: true,
+      option: {
+        select: {
+          card: {
+            select: {
+              deck: {
+                select: {
+                  gameId: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+}
+
 export async function createEffect(data: {
   optionId: string;
   type: string;

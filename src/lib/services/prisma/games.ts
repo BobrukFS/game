@@ -1,4 +1,7 @@
 import { prisma } from "@/lib/prisma"
+import type { Game } from "@prisma/client"
+
+export type { Game }
 
 export async function getAllGames() {
   return prisma.game.findMany({

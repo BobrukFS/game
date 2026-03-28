@@ -1,10 +1,13 @@
 export * as games from "./games";
 export * as decks from "./decks";
+export * as deckConditions from "./deckConditions";
 export * as cards from "./cards";
 export * as conditions from "./conditions";
 export * as options from "./options";
 export * as effects from "./effects";
 export * as stats from "./stats";
+export * as flags from "./flags";
 export * as worldStates from "./worldStates";
+export * as variableReferences from "./variableReferences";
 export * as gameLogic from "./gameLogic";
 export * as playRuntime from "./playRuntime";

@@ -13,9 +13,12 @@ export async function getConditionsByCardId(
   if (error) throw error
   return (data || []).map((c: any) => ({
     id: c.id,
-    type: c.type,
+    dataType: c.data_type,
+    operator: c.operator,
     key: c.key,
-    value: c.value
+    value: c.value,
+    logicOperator: c.logic_operator,
+    order: c.order
   }))
 }
 
@@ -29,9 +32,12 @@ export async function createCondition(
     .insert([
       {
         card_id: cardId,
-        type: condition.type,
+        data_type: condition.dataType,
+        operator: condition.operator,
         key: condition.key,
-        value: condition.value
+        value: condition.value,
+        logic_operator: condition.logicOperator,
+        order: condition.order
       }
     ])
     .select()
@@ -40,9 +46,12 @@ export async function createCondition(
   if (error) throw error
   return {
     id: data.id,
-    type: data.type,
+    dataType: data.data_type,
+    operator: data.operator,
     key: data.key,
-    value: data.value
+    value: data.value,
+    logicOperator: data.logic_operator,
+    order: data.order
   }
 }
 
@@ -52,9 +61,12 @@ export async function updateCondition(
   updates: Partial<Omit<Condition, "id">>
 ): Promise<Condition> {
   const payload: any = {}
-  if (updates.type) payload.type = updates.type
+  if (updates.dataType) payload.data_type = updates.dataType
+  if (updates.operator) payload.operator = updates.operator
   if (updates.key) payload.key = updates.key
   if (updates.value !== undefined) payload.value = updates.value
+  if (updates.logicOperator) payload.logic_operator = updates.logicOperator
+  if (updates.order !== undefined) payload.order = updates.order
 
   const { data, error } = await supabase
     .from("conditions")
@@ -66,9 +78,12 @@ export async function updateCondition(
   if (error) throw error
   return {
     id: data.id,
-    type: data.type,
+    dataType: data.data_type,
+    operator: data.operator,
     key: data.key,
-    value: data.value
+    value: data.value,
+    logicOperator: data.logic_operator,
+    order: data.order
   }
 }
 
