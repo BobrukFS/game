@@ -23,6 +23,7 @@ export default async function GameLayout({
         backHref="/editor"
         navItems={[
           { label: "Decks", href: `/editor/${gameId}` },
+          { label: "Narrative", href: `/editor/${gameId}/narrative` },
           { label: "Variables", href: `/editor/${gameId}/stats` },
           { label: "Game Logic", href: `/editor/${gameId}/logic` },
           { label: "Configuracion", href: `/editor/${gameId}/settings` },

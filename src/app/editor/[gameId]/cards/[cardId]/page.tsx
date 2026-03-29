@@ -440,7 +440,7 @@ export default function CardPage() {
     setAvailableNextCards(
       deckCards
         .filter((deckCard: { id: string }) => deckCard.id !== cardId)
-        .map((deckCard: { id: string; title: string; description: string; type: string; priority: number }) => ({
+        .map((deckCard: { id: string; title: string; description: string; type: string; priority: number | null }) => ({
           id: deckCard.id,
           title: deckCard.title,
           description: deckCard.description,

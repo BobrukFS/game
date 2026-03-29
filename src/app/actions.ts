@@ -1,6 +1,6 @@
 "use server"
 
-import { revalidatePath } from "next/cache"
+import { revalidatePath, revalidateTag, unstable_cache } from "next/cache"
 import * as prismaService from "@/lib/services/prisma"
 import type { InteractionCounterConfig, InteractionRule, Game, Flag } from "@/lib/domain"
 
@@ -17,6 +17,71 @@ const ALLOWED_EFFECT_TYPES = [
   "set_world_state",
 ] as const
 const ALLOWED_WORLD_VALUE_TYPES = ["number", "string", "boolean", "array", "enum"] as const
+
+const CACHE_REVALIDATE_SECONDS = 30
+
+const getCachedGames = unstable_cache(
+  async () => prismaService.games.getAllGames(),
+  ["games:list"],
+  { tags: ["games"], revalidate: CACHE_REVALIDATE_SECONDS }
+)
+
+function getCachedGameById(id: string) {
+  return unstable_cache(
+    async () => prismaService.games.getGameById(id),
+    ["games:by-id", id],
+    { tags: ["games", `game:${id}`], revalidate: CACHE_REVALIDATE_SECONDS }
+  )()
+}
+
+function getCachedDecksByGameId(gameId: string) {
+  return unstable_cache(
+    async () => prismaService.decks.getDecksByGameId(gameId),
+    ["decks:by-game", gameId],
+    { tags: ["decks", `decks:${gameId}`], revalidate: CACHE_REVALIDATE_SECONDS }
+  )()
+}
+
+function getCachedStatsByGameId(gameId: string) {
+  return unstable_cache(
+    async () => prismaService.stats.getStatsByGameId(gameId),
+    ["stats:by-game", gameId],
+    { tags: ["stats", `stats:${gameId}`], revalidate: CACHE_REVALIDATE_SECONDS }
+  )()
+}
+
+function getCachedWorldStatesByGameId(gameId: string) {
+  return unstable_cache(
+    async () => prismaService.worldStates.getWorldStatesByGameId(gameId),
+    ["world:by-game", gameId],
+    { tags: ["worldStates", `worldStates:${gameId}`], revalidate: CACHE_REVALIDATE_SECONDS }
+  )()
+}
+
+function getCachedGameLogicByGameId(gameId: string) {
+  return unstable_cache(
+    async () => prismaService.gameLogic.getGameLogicByGameId(gameId),
+    ["logic:config", gameId],
+    { tags: ["logic", `logic:${gameId}`], revalidate: CACHE_REVALIDATE_SECONDS }
+  )()
+}
+
+function getCachedLogicEditorBootstrapByGameId(gameId: string) {
+  return unstable_cache(
+    async () => prismaService.gameLogic.getLogicEditorBootstrapByGameId(gameId),
+    ["logic:bootstrap", gameId],
+    {
+      tags: [
+        "logic",
+        `logic:${gameId}`,
+        `stats:${gameId}`,
+        `worldStates:${gameId}`,
+        `decks:${gameId}`,
+      ],
+      revalidate: CACHE_REVALIDATE_SECONDS,
+    }
+  )()
+}
 
 function requireText(value: string | undefined, fieldName: string) {
   const normalized = (value || "").trim()
@@ -286,7 +351,7 @@ async function assertFlagExistsInGame(gameId: string, key: string) {
 // ============================================================================
 
 export async function fetchGames(): Promise<Game[]> {
-  const games = await prismaService.games.getAllGames()
+  const games = await getCachedGames()
   return games.map(game => ({
     ...game,
     createdAt: game.createdAt?.toISOString(),
@@ -295,7 +360,7 @@ export async function fetchGames(): Promise<Game[]> {
 }
 
 export async function fetchGameById(id: string): Promise<Game | null> {
-  const game = await prismaService.games.getGameById(id)
+  const game = await getCachedGameById(id)
   if (!game) return null
   return {
     ...game,
@@ -311,6 +376,7 @@ export async function createGame(game: { name: string; description?: string }) {
   }
 
   const result = await prismaService.games.createGame(payload)
+  revalidateTag("games")
   revalidatePath("/editor")
   return result
 }
@@ -330,6 +396,8 @@ export async function updateGame(
   }
 
   const result = await prismaService.games.updateGame(id, normalizedUpdates)
+  revalidateTag("games")
+  revalidateTag(`game:${id}`)
   revalidatePath("/editor")
   revalidatePath(`/editor/${id}`)
   return result
@@ -337,6 +405,12 @@ export async function updateGame(
 
 export async function deleteGame(id: string) {
   const result = await prismaService.games.deleteGame(id)
+  revalidateTag("games")
+  revalidateTag(`game:${id}`)
+  revalidateTag(`decks:${id}`)
+  revalidateTag(`stats:${id}`)
+  revalidateTag(`worldStates:${id}`)
+  revalidateTag(`logic:${id}`)
   revalidatePath("/editor")
   return result
 }
@@ -350,7 +424,7 @@ export async function fetchDecks() {
 }
 
 export async function fetchDecksByGameId(gameId: string) {
-  return prismaService.decks.getDecksByGameId(gameId)
+  return getCachedDecksByGameId(gameId)
 }
 
 export async function fetchDeckById(id: string) {
@@ -373,6 +447,9 @@ export async function createDeck(data: {
   }
 
   const result = await prismaService.decks.createDeck(payload)
+  revalidateTag("decks")
+  revalidateTag(`decks:${data.gameId}`)
+  revalidateTag(`logic:${data.gameId}`)
   revalidatePath(`/editor/${data.gameId}`)
   return result
 }
@@ -405,6 +482,9 @@ export async function updateDeck(
   }
 
   const result = await prismaService.decks.updateDeck(id, normalizedUpdates)
+  revalidateTag("decks")
+  revalidateTag(`decks:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}`)
   revalidatePath(`/editor/${gameId}/decks/${id}`)
   return result
@@ -412,6 +492,9 @@ export async function updateDeck(
 
 export async function deleteDeck(id: string, gameId: string) {
   const result = await prismaService.decks.deleteDeck(id)
+  revalidateTag("decks")
+  revalidateTag(`decks:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}`)
   return result
 }
@@ -805,7 +888,7 @@ export async function fetchAllStats() {
 }
 
 export async function fetchStatsByGameId(gameId: string) {
-  return prismaService.stats.getStatsByGameId(gameId)
+  return getCachedStatsByGameId(gameId)
 }
 
 export async function fetchVariableReferences(
@@ -826,6 +909,10 @@ export async function fetchVariableReferences(
     cardsCount: references.cards.length,
     decksCount: references.decks.length,
   }
+}
+
+export async function fetchNarrativeTagIndex(gameId: string) {
+  return prismaService.narrativeReferences.getNarrativeTagIndex(gameId)
 }
 
 export async function fetchFlagsByGameId(gameId: string): Promise<Flag[]> {
@@ -885,6 +972,9 @@ export async function createStat(
     min,
     max,
   })
+  revalidateTag("stats")
+  revalidateTag(`stats:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }
@@ -933,12 +1023,18 @@ export async function updateStat(
   }
 
   const result = await prismaService.stats.updateStat(id, normalizedUpdates)
+  revalidateTag("stats")
+  revalidateTag(`stats:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }
 
 export async function deleteStat(id: string, gameId: string) {
   const result = await prismaService.stats.deleteStat(id)
+  revalidateTag("stats")
+  revalidateTag(`stats:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }
@@ -948,7 +1044,7 @@ export async function deleteStat(id: string, gameId: string) {
 // ============================================================================
 
 export async function fetchWorldStatesByGameId(gameId: string) {
-  return prismaService.worldStates.getWorldStatesByGameId(gameId)
+  return getCachedWorldStatesByGameId(gameId)
 }
 
 export async function fetchWorldStateByKey(gameId: string, key: string) {
@@ -964,6 +1060,9 @@ export async function createWorldState(
     gameId,
     ...normalized,
   })
+  revalidateTag("worldStates")
+  revalidateTag(`worldStates:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }
@@ -979,12 +1078,18 @@ export async function updateWorldState(
 
   const normalized = validateWorldStateInput(updates)
   const result = await prismaService.worldStates.updateWorldState(id, normalized)
+  revalidateTag("worldStates")
+  revalidateTag(`worldStates:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }
 
 export async function deleteWorldState(id: string, gameId: string) {
   const result = await prismaService.worldStates.deleteWorldState(id)
+  revalidateTag("worldStates")
+  revalidateTag(`worldStates:${gameId}`)
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }
@@ -994,7 +1099,7 @@ export async function deleteWorldState(id: string, gameId: string) {
 // ============================================================================
 
 export async function fetchGameLogicConfig(gameId: string) {
-  const config = await prismaService.gameLogic.getGameLogicByGameId(gameId)
+  const config = await getCachedGameLogicByGameId(gameId)
 
   return {
     counters: (config?.counters as unknown as InteractionCounterConfig[]) || [],
@@ -1002,6 +1107,22 @@ export async function fetchGameLogicConfig(gameId: string) {
     weightRules: (config?.weightRules as unknown as import("@/lib/domain").SelectionWeightRule[]) || [],
     constraintRules:
       (config?.constraintRules as unknown as import("@/lib/domain").SelectionConstraintRule[]) || [],
+  }
+}
+
+export async function fetchLogicEditorBootstrap(gameId: string) {
+  const bootstrap = await getCachedLogicEditorBootstrapByGameId(gameId)
+
+  return {
+    counters: (bootstrap.config?.counters as unknown as InteractionCounterConfig[]) || [],
+    rules: (bootstrap.config?.rules as unknown as InteractionRule[]) || [],
+    weightRules:
+      (bootstrap.config?.weightRules as unknown as import("@/lib/domain").SelectionWeightRule[]) || [],
+    constraintRules:
+      (bootstrap.config?.constraintRules as unknown as import("@/lib/domain").SelectionConstraintRule[]) || [],
+    statKeys: bootstrap.statKeys,
+    worldStateKeys: bootstrap.worldStateKeys,
+    deckWeights: bootstrap.deckWeights,
   }
 }
 
@@ -1161,6 +1282,8 @@ export async function saveGameLogicConfig(
     constraintRules: constraintRules as any,
   })
 
+  revalidateTag("logic")
+  revalidateTag(`logic:${gameId}`)
   revalidatePath(`/editor/${gameId}/stats`)
   return result
 }

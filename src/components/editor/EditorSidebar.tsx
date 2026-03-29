@@ -6,10 +6,10 @@ import { usePathname } from "next/navigation"
 import { fetchGames } from "@/app/actions"
 import { Game } from "@/lib/domain"
 
-export default function EditorSidebar() {
+export default function EditorSidebar({ initialGames }: { initialGames: Game[] }) {
   const pathname = usePathname()
-  const [games, setGames] = useState<Game[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [games, setGames] = useState<Game[]>(initialGames)
+  const [isLoading, setIsLoading] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
@@ -20,26 +20,22 @@ export default function EditorSidebar() {
 
     let mounted = true
 
-    async function loadGames() {
-      try {
-        setIsLoading(true)
-        const data = await fetchGames()
-        if (mounted) {
-          setGames(data)
-        }
-      } catch (error) {
-        console.error("Error loading games for sidebar:", error)
-      } finally {
-        if (mounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    loadGames()
-
     const refreshHandler = () => {
-      loadGames()
+      void (async () => {
+        try {
+          setIsLoading(true)
+          const data = await fetchGames()
+          if (mounted) {
+            setGames(data)
+          }
+        } catch (error) {
+          console.error("Error loading games for sidebar:", error)
+        } finally {
+          if (mounted) {
+            setIsLoading(false)
+          }
+        }
+      })()
     }
 
     window.addEventListener("games:refresh", refreshHandler)

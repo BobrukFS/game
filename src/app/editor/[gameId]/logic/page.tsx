@@ -1,12 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import {
-  fetchDecksByGameId,
-  fetchGameLogicConfig,
-  fetchStatsByGameId,
-  fetchWorldStatesByGameId,
+  fetchLogicEditorBootstrap,
   saveGameLogicConfig,
 } from "@/app/actions"
 import {
@@ -182,27 +179,15 @@ export default function LogicPage() {
   async function loadLogic() {
     try {
       setIsLoading(true)
-      const [logic, worldStates, stats, decks] = await Promise.all([
-        fetchGameLogicConfig(gameId),
-        fetchWorldStatesByGameId(gameId),
-        fetchStatsByGameId(gameId),
-        fetchDecksByGameId(gameId),
-      ])
+      const bootstrap = await fetchLogicEditorBootstrap(gameId)
 
-      setLogicCounters(logic.counters || [])
-      setLogicRules(logic.rules || [])
-      setLogicWeightRules(logic.weightRules || [])
-      setLogicConstraintRules(logic.constraintRules || [])
-      setWorldStateKeys((worldStates || []).map((ws) => ws.key))
-      setStatKeys((stats || []).map((stat) => stat.key))
-      setDeckWeights(
-        (decks || []).map((deck: { id: string; name: string; type: string; weight: number }) => ({
-          id: deck.id,
-          name: deck.name,
-          type: deck.type,
-          weight: Number.isFinite(deck.weight) && deck.weight > 0 ? deck.weight : 1,
-        }))
-      )
+      setLogicCounters(bootstrap.counters || [])
+      setLogicRules(bootstrap.rules || [])
+      setLogicWeightRules(bootstrap.weightRules || [])
+      setLogicConstraintRules(bootstrap.constraintRules || [])
+      setWorldStateKeys(bootstrap.worldStateKeys || [])
+      setStatKeys(bootstrap.statKeys || [])
+      setDeckWeights(bootstrap.deckWeights || [])
     } catch (error) {
       console.error("Error loading game logic:", error)
     } finally {
@@ -772,31 +757,47 @@ export default function LogicPage() {
     setConstraintRuleDraft(null)
   }
 
-  const sortedDeckWeights = [...deckWeights].sort((left, right) => {
-    if (left.weight !== right.weight) return right.weight - left.weight
-    return left.id.localeCompare(right.id)
-  })
+  const sortedDeckWeights = useMemo(() => {
+    const next = [...deckWeights]
+    next.sort((left, right) => {
+      if (left.weight !== right.weight) return right.weight - left.weight
+      return left.id.localeCompare(right.id)
+    })
+    return next
+  }, [deckWeights])
 
-  const totalDeckWeight = deckWeights.reduce((sum, deck) => sum + deck.weight, 0)
+  const totalDeckWeight = useMemo(
+    () => deckWeights.reduce((sum, deck) => sum + deck.weight, 0),
+    [deckWeights]
+  )
 
-  const deckTypeOptions = Array.from(new Set(deckWeights.map((deck) => deck.type).filter(Boolean))).sort()
+  const deckTypeOptions = useMemo(
+    () => Array.from(new Set(deckWeights.map((deck) => deck.type).filter(Boolean))).sort(),
+    [deckWeights]
+  )
   const isDeckWeightTarget =
     weightRuleForm.targetType === "deck_id" ||
     weightRuleForm.targetType === "deck_type"
 
-  const weightTargetOptions =
-    weightRuleForm.targetType === "deck_id"
-      ? sortedDeckWeights.map((deck) => ({ key: deck.id, label: `${deck.name} (${deck.id.slice(0, 8)})` }))
-      : deckTypeOptions.map((type) => ({ key: type, label: type }))
+  const weightTargetOptions = useMemo(
+    () =>
+      weightRuleForm.targetType === "deck_id"
+        ? sortedDeckWeights.map((deck) => ({ key: deck.id, label: `${deck.name} (${deck.id.slice(0, 8)})` }))
+        : deckTypeOptions.map((type) => ({ key: type, label: type })),
+    [weightRuleForm.targetType, sortedDeckWeights, deckTypeOptions]
+  )
 
   const isDeckConstraintTarget =
     constraintRuleForm.targetType === "deck_id" ||
     constraintRuleForm.targetType === "deck_type"
 
-  const constraintTargetOptions =
-    constraintRuleForm.targetType === "deck_id"
-      ? sortedDeckWeights.map((deck) => ({ key: deck.id, label: `${deck.name} (${deck.id.slice(0, 8)})` }))
-      : deckTypeOptions.map((type) => ({ key: type, label: type }))
+  const constraintTargetOptions = useMemo(
+    () =>
+      constraintRuleForm.targetType === "deck_id"
+        ? sortedDeckWeights.map((deck) => ({ key: deck.id, label: `${deck.name} (${deck.id.slice(0, 8)})` }))
+        : deckTypeOptions.map((type) => ({ key: type, label: type })),
+    [constraintRuleForm.targetType, sortedDeckWeights, deckTypeOptions]
+  )
 
   const weightConditionOperatorOptions = getConditionOperatorOptions(weightRuleForm.conditionSource)
   const constraintConditionOperatorOptions = getConditionOperatorOptions(constraintRuleForm.conditionSource)
@@ -806,12 +807,17 @@ export default function LogicPage() {
   const supportsCounterFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.counterKey
   const supportsDeckTypeFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.deckType
 
-  const actionKeyOptions =
-    ruleForm.actionType === "increment_counter"
-      ? logicCounters.map((counter) => counter.key)
-      : ruleForm.actionType === "set_stat" || ruleForm.actionType === "modify_stat"
-        ? statKeys
-        : worldStateKeys
+  const actionKeyOptions = useMemo(() => {
+    if (ruleForm.actionType === "increment_counter") {
+      return logicCounters.map((counter) => counter.key)
+    }
+
+    if (ruleForm.actionType === "set_stat" || ruleForm.actionType === "modify_stat") {
+      return statKeys
+    }
+
+    return worldStateKeys
+  }, [ruleForm.actionType, logicCounters, statKeys, worldStateKeys])
 
   const isCustomActionKey = !!ruleForm.actionKey && !actionKeyOptions.includes(ruleForm.actionKey)
 

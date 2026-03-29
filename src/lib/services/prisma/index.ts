@@ -9,5 +9,6 @@ export * as stats from "./stats";
 export * as flags from "./flags";
 export * as worldStates from "./worldStates";
 export * as variableReferences from "./variableReferences";
+export * as narrativeReferences from "./narrativeReferences";
 export * as gameLogic from "./gameLogic";
 export * as playRuntime from "./playRuntime";
