@@ -16,3 +16,24 @@ textarea,
 select {
   @apply outline-none;
 }
+
+@keyframes route-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(-12%);
+  }
+  100% {
+    transform: translateX(20%);
+  }
+}
+
+.route-progress-bar {
+  background: linear-gradient(90deg, #22d3ee 0%, #38bdf8 45%, #22d3ee 100%);
+  animation: route-progress 1s ease-in-out infinite;
+}
+
+body.route-pending {
+  cursor: progress;
+}

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import RouteTransitionFeedback from "@/components/navigation/RouteTransitionFeedback";
 
 export const metadata: Metadata = {
   title: "Reigns Narrative Editor",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <RouteTransitionFeedback />
+        {children}
+      </body>
     </html>
   );
 }
