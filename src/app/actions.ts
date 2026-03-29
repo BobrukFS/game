@@ -16,7 +16,7 @@ const ALLOWED_EFFECT_TYPES = [
   "remove_flag",
   "set_world_state",
 ] as const
-const ALLOWED_WORLD_VALUE_TYPES = ["number", "string", "boolean", "array"] as const
+const ALLOWED_WORLD_VALUE_TYPES = ["number", "string", "boolean", "array", "enum"] as const
 
 function requireText(value: string | undefined, fieldName: string) {
   const normalized = (value || "").trim()
@@ -240,6 +240,35 @@ function validateWorldStateInput(input: { key?: string; valueType?: string; valu
       throw new Error("Valor array debe ser JSON valido")
     }
     return { key, valueType, value: rawValue }
+  }
+
+  if (valueType === "enum") {
+    try {
+      const parsed = JSON.parse(rawValue) as { current?: unknown; options?: unknown }
+      const options = Array.isArray(parsed?.options)
+        ? parsed.options.map((item) => String(item).trim()).filter(Boolean)
+        : []
+
+      if (options.length === 0) {
+        throw new Error("World state enum requiere al menos una opcion")
+      }
+
+      const current = String(parsed?.current ?? "").trim()
+      if (!current || !options.includes(current)) {
+        throw new Error("World state enum requiere current valido dentro de options")
+      }
+
+      return {
+        key,
+        valueType,
+        value: JSON.stringify({ current, options }),
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error("Valor enum debe ser JSON valido")
+    }
   }
 
   return { key, valueType, value: rawValue }
@@ -1000,6 +1029,36 @@ export async function saveGameLogicConfig(
     if (!rule?.id || !rule?.when?.counterKey) {
       throw new Error("Cada regla debe tener id y condicion")
     }
+
+    for (const action of rule.actions || []) {
+      if (!action?.type || !action?.key?.trim()) {
+        throw new Error("Cada accion de regla debe tener type y key")
+      }
+
+      if (action.type === "step_world_state_option") {
+        const options = Array.isArray(action.options)
+          ? action.options.map((option) => String(option).trim()).filter(Boolean)
+          : []
+
+        if (Array.isArray(action.options) && options.length === 0) {
+          throw new Error("step_world_state_option con options requiere al menos una opcion valida")
+        }
+
+        if (
+          typeof action.defaultIndex !== "undefined" &&
+          !Number.isFinite(Number(action.defaultIndex))
+        ) {
+          throw new Error("defaultIndex invalido en step_world_state_option")
+        }
+
+        if (
+          typeof action.amount !== "undefined" &&
+          !Number.isFinite(Number(action.amount))
+        ) {
+          throw new Error("amount invalido en step_world_state_option")
+        }
+      }
+    }
   }
 
   for (const weightRule of weightRules) {
@@ -1050,15 +1109,8 @@ export async function saveGameLogicConfig(
       throw new Error("targetType invalido en regla de restriccion")
     }
 
-    if (!constraintRule.counterCondition && !Number.isFinite(constraintRule.maxOccurrences)) {
-      throw new Error("La regla de restriccion requiere counterCondition o maxOccurrences")
-    }
-
-    if (
-      Number.isFinite(constraintRule.maxOccurrences) &&
-      Number(constraintRule.maxOccurrences) < 0
-    ) {
-      throw new Error("maxOccurrences invalido en regla de restriccion")
+    if (!constraintRule.counterCondition) {
+      throw new Error("La regla de restriccion requiere counterCondition")
     }
 
     if (
@@ -1068,16 +1120,37 @@ export async function saveGameLogicConfig(
       throw new Error("counterCondition invalida en regla de restriccion")
     }
 
+    if (Array.isArray(constraintRule.conditions)) {
+      for (const condition of constraintRule.conditions) {
+        if (!condition?.source || !condition?.key?.trim()) {
+          throw new Error("Condicion invalida en regla de restriccion")
+        }
+
+        if (![
+          "counter",
+          "stat",
+          "world",
+          "flag",
+          "deck",
+          "card",
+        ].includes(condition.source)) {
+          throw new Error("Fuente invalida en condicion de regla de restriccion")
+        }
+
+        if (!["eq", "gt", "gte", "lt", "lte"].includes(condition.operator)) {
+          throw new Error("Operador invalido en condicion de regla de restriccion")
+        }
+
+        if (typeof condition.value === "undefined" || condition.value === null) {
+          throw new Error("Valor faltante en condicion de regla de restriccion")
+        }
+      }
+    }
+
     if (constraintRule.scope && !["cycle", "global"].includes(constraintRule.scope)) {
       throw new Error("scope invalido en regla de restriccion")
     }
 
-    if (
-      constraintRule.occurrenceMode &&
-      !["count_matches", "count_unique_targets"].includes(constraintRule.occurrenceMode)
-    ) {
-      throw new Error("occurrenceMode invalido en regla de restriccion")
-    }
   }
 
   const result = await prismaService.gameLogic.upsertGameLogicByGameId({
@@ -1124,7 +1197,11 @@ export async function bootstrapSelectionLogicSetup(gameId: string) {
   const baseWorldStates = [
     { key: "world.cycle", valueType: "number", value: "1" },
     { key: "world.day", valueType: "number", value: "1" },
-    { key: "world.phase", valueType: "string", value: "day" },
+    {
+      key: "world.phase",
+      valueType: "enum",
+      value: JSON.stringify({ current: "day", options: ["day", "sunset", "night"] }),
+    },
     { key: "world.context", valueType: "string", value: "default" },
   ] as const
 

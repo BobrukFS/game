@@ -24,7 +24,7 @@ type WorldStateItem = {
   id: string
   gameId: string
   key: string
-  valueType: "number" | "string" | "boolean" | "array"
+  valueType: "number" | "string" | "boolean" | "array" | "enum"
   value: string
 }
 
@@ -73,12 +73,16 @@ export default function StatsPage() {
 
   const [worldStateForm, setWorldStateForm] = useState<{
     key: string
-    valueType: "number" | "string" | "boolean" | "array"
+    valueType: "number" | "string" | "boolean" | "array" | "enum"
     value: string
+    enumOptions: string
+    enumCurrent: string
   }>({
     key: "",
     valueType: "number",
     value: "0",
+    enumOptions: "",
+    enumCurrent: "",
   })
 
   const [flagForm, setFlagForm] = useState({ key: "" })
@@ -243,15 +247,10 @@ export default function StatsPage() {
     setFeedback("")
 
     const key = worldStateForm.key.trim()
-    const rawValue = worldStateForm.value.trim()
+    let rawValue = worldStateForm.value.trim()
 
     if (!editingWorldStateId && !key) {
       setFeedback("La key del world state es obligatoria")
-      return
-    }
-
-    if (!rawValue) {
-      setFeedback("El valor del world state es obligatorio")
       return
     }
 
@@ -283,6 +282,36 @@ export default function StatsPage() {
       }
     }
 
+    if (worldStateForm.valueType === "enum") {
+      const options = worldStateForm.enumOptions
+        .split(",")
+        .map((option) => option.trim())
+        .filter(Boolean)
+
+      if (options.length === 0) {
+        setFeedback("World state enum requiere al menos una opcion")
+        return
+      }
+
+      const current = worldStateForm.enumCurrent.trim()
+      if (!current) {
+        setFeedback("World state enum requiere valor actual")
+        return
+      }
+
+      if (!options.includes(current)) {
+        setFeedback("El valor actual debe estar dentro de las opciones")
+        return
+      }
+
+      rawValue = JSON.stringify({ current, options })
+    }
+
+    if (worldStateForm.valueType !== "enum" && !rawValue) {
+      setFeedback("El valor del world state es obligatorio")
+      return
+    }
+
     try {
       if (editingWorldStateId) {
         await updateWorldState(editingWorldStateId, gameId, {
@@ -299,7 +328,7 @@ export default function StatsPage() {
       }
 
       setEditingWorldStateId(null)
-      setWorldStateForm({ key: "", valueType: "number", value: "0" })
+      setWorldStateForm({ key: "", valueType: "number", value: "0", enumOptions: "", enumCurrent: "" })
       setShowWorldStateForm(false)
       await loadAll()
     } catch (error) {
@@ -350,11 +379,30 @@ export default function StatsPage() {
   }
 
   function handleEditWorldState(item: WorldStateItem) {
+    let enumOptions = ""
+    let enumCurrent = ""
+
+    if (item.valueType === "enum") {
+      try {
+        const parsed = JSON.parse(item.value) as { current?: unknown; options?: unknown }
+        const options = Array.isArray(parsed?.options)
+          ? parsed.options.map((option) => String(option).trim()).filter(Boolean)
+          : []
+        enumOptions = options.join(", ")
+        enumCurrent = String(parsed?.current ?? "").trim()
+      } catch {
+        enumOptions = ""
+        enumCurrent = ""
+      }
+    }
+
     setEditingWorldStateId(item.id)
     setWorldStateForm({
       key: item.key,
       valueType: item.valueType,
       value: item.value,
+      enumOptions,
+      enumCurrent,
     })
     setShowWorldStateForm(true)
   }
@@ -403,7 +451,7 @@ export default function StatsPage() {
 
   function resetWorldStateForm() {
     setEditingWorldStateId(null)
-    setWorldStateForm({ key: "", valueType: "number", value: "0" })
+    setWorldStateForm({ key: "", valueType: "number", value: "0", enumOptions: "", enumCurrent: "" })
     setShowWorldStateForm(false)
   }
 
@@ -553,16 +601,25 @@ export default function StatsPage() {
                 <select
                   value={worldStateForm.valueType}
                   onChange={(e) => {
-                    const newType = e.target.value as "number" | "string" | "boolean" | "array"
+                    const newType = e.target.value as "number" | "string" | "boolean" | "array" | "enum"
                     let newValue = worldStateForm.value
+                    let newOptions = worldStateForm.enumOptions
+                    let newCurrent = worldStateForm.enumCurrent
                     if (newType === "boolean") newValue = "false"
                     if (newType === "array") newValue = "[]"
                     if (newType === "number") newValue = "0"
                     if (newType === "string") newValue = ""
+                    if (newType === "enum") {
+                      newValue = ""
+                      newOptions = "dia, atardecer, noche"
+                      newCurrent = "dia"
+                    }
                     setWorldStateForm((prev) => ({
                       ...prev,
                       valueType: newType,
                       value: newValue,
+                      enumOptions: newOptions,
+                      enumCurrent: newCurrent,
                     }))
                   }}
                   className="w-full px-4 py-2 bg-slate-700 rounded text-white"
@@ -571,6 +628,7 @@ export default function StatsPage() {
                   <option value="string">string</option>
                   <option value="boolean">boolean</option>
                   <option value="array">array</option>
+                  <option value="enum">enum (ciclo)</option>
                 </select>
               </div>
               <div>
@@ -584,6 +642,25 @@ export default function StatsPage() {
                     <option value="true">true</option>
                     <option value="false">false</option>
                   </select>
+                ) : worldStateForm.valueType === "enum" ? (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={worldStateForm.enumOptions}
+                      onChange={(e) => setWorldStateForm((prev) => ({ ...prev, enumOptions: e.target.value }))}
+                      placeholder="dia, atardecer, noche"
+                      className="w-full px-4 py-2 bg-slate-700 rounded text-white"
+                      required
+                    />
+                    <input
+                      type="text"
+                      value={worldStateForm.enumCurrent}
+                      onChange={(e) => setWorldStateForm((prev) => ({ ...prev, enumCurrent: e.target.value }))}
+                      placeholder="valor actual (ej: dia)"
+                      className="w-full px-4 py-2 bg-slate-700 rounded text-white"
+                      required
+                    />
+                  </div>
                 ) : worldStateForm.valueType === "array" ? (
                   <textarea
                     value={worldStateForm.value}
@@ -624,7 +701,21 @@ export default function StatsPage() {
                 <div>
                   <p className="font-semibold text-lg">{item.key}</p>
                   <p className="text-slate-400 text-sm">
-                    <span className="font-mono">{item.valueType}</span>: {item.valueType === "array" ? "[...]" : item.value}
+                    <span className="font-mono">{item.valueType}</span>: {
+                      item.valueType === "array"
+                        ? "[...]"
+                        : item.valueType === "enum"
+                          ? (() => {
+                              try {
+                                const parsed = JSON.parse(item.value) as { current?: unknown; options?: unknown }
+                                const options = Array.isArray(parsed?.options) ? parsed.options : []
+                                return `${String(parsed?.current ?? "")} (${options.length} opciones)`
+                              } catch {
+                                return "enum invalido"
+                              }
+                            })()
+                          : item.value
+                    }
                   </p>
                   <button
                     type="button"

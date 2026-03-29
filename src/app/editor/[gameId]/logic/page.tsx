@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import {
-  bootstrapSelectionLogicSetup,
   fetchDecksByGameId,
   fetchGameLogicConfig,
   fetchStatsByGameId,
@@ -16,7 +15,6 @@ import {
   RuleOperator,
   RuleTriggerType,
   SelectionConditionSource,
-  SelectionConstraintOccurrenceMode,
   SelectionConstraintRule,
   SelectionWeightRule,
   SelectionWeightTargetType,
@@ -43,21 +41,23 @@ const EVENT_OPTIONS: RuleTriggerType[] = [
   "card_shown",
   "option_resolved",
   "stat_changed",
+  "world_changed",
   "counter_changed",
   "sequence_started",
   "sequence_completed",
   "sequence_paused",
 ]
 
-const EVENT_FILTER_SUPPORT: Record<RuleTriggerType, { statKey: boolean; worldKey: boolean; counterKey: boolean }> = {
-  any: { statKey: false, worldKey: false, counterKey: false },
-  card_shown: { statKey: false, worldKey: false, counterKey: false },
-  option_resolved: { statKey: false, worldKey: false, counterKey: false },
-  stat_changed: { statKey: true, worldKey: false, counterKey: false },
-  counter_changed: { statKey: false, worldKey: false, counterKey: true },
-  sequence_started: { statKey: false, worldKey: false, counterKey: false },
-  sequence_completed: { statKey: false, worldKey: false, counterKey: false },
-  sequence_paused: { statKey: false, worldKey: true, counterKey: false },
+const EVENT_FILTER_SUPPORT: Record<RuleTriggerType, { statKey: boolean; worldKey: boolean; counterKey: boolean; deckType: boolean }> = {
+  any: { statKey: false, worldKey: false, counterKey: false, deckType: false },
+  card_shown: { statKey: false, worldKey: false, counterKey: false, deckType: true },
+  option_resolved: { statKey: false, worldKey: false, counterKey: false, deckType: true },
+  stat_changed: { statKey: true, worldKey: false, counterKey: false, deckType: false },
+  world_changed: { statKey: false, worldKey: true, counterKey: false, deckType: false },
+  counter_changed: { statKey: false, worldKey: false, counterKey: true, deckType: false },
+  sequence_started: { statKey: false, worldKey: false, counterKey: false, deckType: true },
+  sequence_completed: { statKey: false, worldKey: false, counterKey: false, deckType: true },
+  sequence_paused: { statKey: false, worldKey: true, counterKey: false, deckType: true },
 }
 
 function compareByOperator(left: number, operator: RuleOperator, right: number) {
@@ -77,22 +77,24 @@ function compareByOperator(left: number, operator: RuleOperator, right: number) 
   }
 }
 
-function compareSelectionValues(
-  left: number | string | boolean,
-  operator: RuleOperator,
-  right: number | string | boolean
-) {
-  if (operator === "eq") {
-    return String(left) === String(right)
-  }
+const NUMERIC_RULE_OPERATORS: RuleOperator[] = ["eq", "gt", "gte", "lt", "lte"]
 
-  const leftNumber = Number(left)
-  const rightNumber = Number(right)
-  if (!Number.isFinite(leftNumber) || !Number.isFinite(rightNumber)) {
-    return false
-  }
+function getConditionOperatorOptions(source: "" | SelectionConditionSource): RuleOperator[] {
+  if (!source) return NUMERIC_RULE_OPERATORS
+  if (source === "flag") return ["eq"]
+  return NUMERIC_RULE_OPERATORS
+}
 
-  return compareByOperator(leftNumber, operator, rightNumber)
+function getDefaultConditionOperator(source: "" | SelectionConditionSource): RuleOperator {
+  return getConditionOperatorOptions(source)[0]
+}
+
+function normalizeConditionOperator(
+  source: "" | SelectionConditionSource,
+  operator: RuleOperator
+): RuleOperator {
+  const options = getConditionOperatorOptions(source)
+  return options.includes(operator) ? operator : options[0]
 }
 
 export default function LogicPage() {
@@ -124,14 +126,19 @@ export default function LogicPage() {
     filterStatKey: "",
     filterWorldKey: "",
     filterCounterKey: "",
+    filterDeckType: "",
     actionType: "increment_counter" as
       | "increment_counter"
       | "set_world_state"
       | "increment_world_state"
       | "set_stat"
-      | "modify_stat",
+      | "modify_stat"
+      | "step_world_state_option",
     actionKey: "",
     actionValue: "",
+    actionOptions: "",
+    actionDefaultIndex: 0,
+    actionWrap: true,
   })
 
   const [weightRuleForm, setWeightRuleForm] = useState({
@@ -148,10 +155,10 @@ export default function LogicPage() {
   const [constraintRuleForm, setConstraintRuleForm] = useState({
     targetType: "deck_type" as SelectionWeightTargetType,
     targetKey: "",
-    maxOccurrences: 1,
-    scope: "cycle" as "cycle" | "global",
-    scopeWorldKey: "world.cycle",
-    occurrenceMode: "count_matches" as SelectionConstraintOccurrenceMode,
+    conditionSource: "" as "" | SelectionConditionSource,
+    conditionKey: "",
+    conditionOperator: "gte" as RuleOperator,
+    conditionValue: "",
     blockCounterKey: "",
     blockCounterOperator: "gte" as RuleOperator,
     blockCounterValue: 1,
@@ -160,11 +167,6 @@ export default function LogicPage() {
     whenCounterValue: 1,
   })
 
-  const [weightPreview, setWeightPreview] = useState({
-    source: "" as "" | SelectionConditionSource,
-    key: "",
-    value: "",
-  })
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
   const [expandedWeightRuleId, setExpandedWeightRuleId] = useState<string | null>(null)
   const [editingWeightRuleId, setEditingWeightRuleId] = useState<string | null>(null)
@@ -235,23 +237,6 @@ export default function LogicPage() {
     }
   }
 
-  async function handleBootstrapSelectionBase() {
-    try {
-      setFeedback("")
-      setIsSaving(true)
-      const result = await bootstrapSelectionLogicSetup(gameId)
-      await loadLogic()
-      setFeedback(
-        `Base de seleccion creada. Contadores totales: ${result.countersTotal}. World states nuevos: ${result.createdWorldStates}.`
-      )
-    } catch (error) {
-      setFeedback("No se pudo inicializar la base de seleccion")
-      console.error("Error bootstrapping selection logic:", error)
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
   async function handleAddCounter(e: React.FormEvent) {
     e.preventDefault()
     const key = counterForm.key.trim()
@@ -292,9 +277,18 @@ export default function LogicPage() {
     const counterKey = ruleForm.counterKey.trim()
     const actionKey = ruleForm.actionKey.trim()
     const actionValue = ruleForm.actionValue.trim()
+    const actionOptions = ruleForm.actionOptions
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
 
-    if (!counterKey || !actionKey || !actionValue) {
-      setFeedback("Regla incompleta: counter/action key/value son obligatorios")
+    if (!counterKey || !actionKey) {
+      setFeedback("Regla incompleta: counter key y action key son obligatorios")
+      return
+    }
+
+    if (ruleForm.actionType !== "step_world_state_option" && !actionValue) {
+      setFeedback("Regla incompleta: action value es obligatorio")
       return
     }
 
@@ -345,11 +339,20 @@ export default function LogicPage() {
                   key: actionKey,
                   value: Number(actionValue),
                 }
-              : {
+                : ruleForm.actionType === "modify_stat"
+                  ? {
                   type: "modify_stat" as const,
                   key: actionKey,
                   amount: Number(actionValue),
                 }
+                  : {
+                    type: "step_world_state_option" as const,
+                    key: actionKey,
+                    ...(actionOptions.length > 0 ? { options: actionOptions } : {}),
+                    defaultIndex: Number(ruleForm.actionDefaultIndex),
+                    amount: Number(actionValue || "1"),
+                    wrap: !!ruleForm.actionWrap,
+                  }
 
     if (
       ("amount" in action && !Number.isFinite(action.amount)) ||
@@ -366,6 +369,7 @@ export default function LogicPage() {
         statKey: ruleForm.filterStatKey.trim() || undefined,
         worldKey: ruleForm.filterWorldKey.trim() || undefined,
         counterKey: ruleForm.filterCounterKey.trim() || undefined,
+        deckType: ruleForm.filterDeckType.trim() || undefined,
       },
       when: {
         counterKey,
@@ -388,9 +392,13 @@ export default function LogicPage() {
       filterStatKey: "",
       filterWorldKey: "",
       filterCounterKey: "",
+      filterDeckType: "",
       actionType: "increment_counter",
       actionKey: "",
       actionValue: "",
+      actionOptions: "",
+      actionDefaultIndex: 0,
+      actionWrap: true,
     })
     setEditingRuleId(null)
   }
@@ -412,6 +420,8 @@ export default function LogicPage() {
     const actionValue =
       actionType === "increment_counter" || actionType === "increment_world_state" || actionType === "modify_stat"
         ? String(action.amount ?? 1)
+        : actionType === "step_world_state_option"
+          ? String(action.amount ?? 1)
         : actionType === "set_world_state"
           ? String(action.value)
           : String(action.value)
@@ -425,9 +435,22 @@ export default function LogicPage() {
       filterStatKey: rule.filters?.statKey || "",
       filterWorldKey: rule.filters?.worldKey || "",
       filterCounterKey: rule.filters?.counterKey || "",
+      filterDeckType: rule.filters?.deckType || "",
       actionType,
       actionKey,
       actionValue,
+      actionOptions:
+        actionType === "step_world_state_option"
+          ? (action.options || []).join(", ")
+          : "",
+      actionDefaultIndex:
+        actionType === "step_world_state_option"
+          ? Number(action.defaultIndex ?? 0)
+          : 0,
+      actionWrap:
+        actionType === "step_world_state_option"
+          ? action.wrap !== false
+          : true,
     })
     setFeedback("")
   }
@@ -442,9 +465,13 @@ export default function LogicPage() {
       filterStatKey: "",
       filterWorldKey: "",
       filterCounterKey: "",
+      filterDeckType: "",
       actionType: "increment_counter",
       actionKey: "",
       actionValue: "",
+      actionOptions: "",
+      actionDefaultIndex: 0,
+      actionWrap: true,
     })
     setFeedback("")
   }
@@ -516,7 +543,7 @@ export default function LogicPage() {
       value: 1,
       conditionSource: "",
       conditionKey: "",
-      conditionOperator: "gte",
+      conditionOperator: getDefaultConditionOperator(""),
       conditionValue: "",
     })
   }
@@ -607,24 +634,35 @@ export default function LogicPage() {
     }
 
     const hasCounterCondition = !!constraintRuleForm.blockCounterKey.trim()
-    const hasMaxOccurrences = Number.isFinite(constraintRuleForm.maxOccurrences)
-
-    if (!hasCounterCondition && !hasMaxOccurrences) {
-      setFeedback("La regla de restriccion requiere block counter o maxOccurrences")
+    if (!hasCounterCondition) {
+      setFeedback("La regla de restriccion requiere block counter")
       return
     }
+
+    const conditionSource = constraintRuleForm.conditionSource || null
+
+    const hasGenericCondition =
+      !!conditionSource &&
+      !!constraintRuleForm.conditionKey.trim() &&
+      String(constraintRuleForm.conditionValue).trim() !== ""
 
     const nextConstraintRule: SelectionConstraintRule = {
       id: `constraint-${Date.now()}`,
       targetType: constraintRuleForm.targetType,
       targetKey,
-      maxOccurrences: hasMaxOccurrences ? Number(constraintRuleForm.maxOccurrences) : undefined,
-      scope: constraintRuleForm.scope,
-      scopeWorldKey:
-        constraintRuleForm.scope === "cycle"
-          ? constraintRuleForm.scopeWorldKey.trim() || undefined
-          : undefined,
-      occurrenceMode: constraintRuleForm.occurrenceMode,
+      conditions: hasGenericCondition
+        ? [
+            {
+              source: conditionSource,
+              key: constraintRuleForm.conditionKey.trim(),
+              operator: constraintRuleForm.conditionOperator,
+              value: normalizeSelectionConditionValue(
+                conditionSource,
+                constraintRuleForm.conditionValue
+              ),
+            },
+          ]
+        : undefined,
       counterCondition: hasCounterCondition
         ? {
             counterKey: constraintRuleForm.blockCounterKey.trim(),
@@ -646,10 +684,10 @@ export default function LogicPage() {
     setConstraintRuleForm({
       targetType: "deck_type",
       targetKey: "",
-      maxOccurrences: 1,
-      scope: "cycle",
-      scopeWorldKey: "world.cycle",
-      occurrenceMode: "count_matches",
+      conditionSource: "",
+      conditionKey: "",
+      conditionOperator: getDefaultConditionOperator(""),
+      conditionValue: "",
       blockCounterKey: "",
       blockCounterOperator: "gte",
       blockCounterValue: 1,
@@ -682,15 +720,21 @@ export default function LogicPage() {
   async function saveEditConstraintRule() {
     if (!editingConstraintRuleId || !constraintRuleDraft) return
 
+    const normalizedConditions = (constraintRuleDraft.conditions || [])
+      .filter((condition) => condition.source && condition.key?.trim())
+      .map((condition) => ({
+        ...condition,
+        key: condition.key.trim(),
+        value: normalizeSelectionConditionValue(
+          condition.source,
+          condition.value as string | number | boolean
+        ),
+      }))
+
     const normalizedRule: SelectionConstraintRule = {
       ...constraintRuleDraft,
       targetKey: (constraintRuleDraft.targetKey || "").trim(),
-      maxOccurrences:
-        typeof constraintRuleDraft.maxOccurrences === "number" &&
-        Number.isFinite(constraintRuleDraft.maxOccurrences)
-          ? Number(constraintRuleDraft.maxOccurrences)
-          : undefined,
-      scopeWorldKey: constraintRuleDraft.scopeWorldKey?.trim() || undefined,
+      conditions: normalizedConditions.length > 0 ? normalizedConditions : undefined,
       counterCondition: constraintRuleDraft.counterCondition?.counterKey?.trim()
         ? {
             counterKey: constraintRuleDraft.counterCondition.counterKey.trim(),
@@ -714,11 +758,8 @@ export default function LogicPage() {
 
     const hasCounterCondition =
       !!normalizedRule.counterCondition && Number.isFinite(normalizedRule.counterCondition.value)
-    const hasMaxOccurrences =
-      typeof normalizedRule.maxOccurrences === "number" && Number.isFinite(normalizedRule.maxOccurrences)
-
-    if (!hasCounterCondition && !hasMaxOccurrences) {
-      setFeedback("La regla requiere counterCondition o maxOccurrences")
+    if (!hasCounterCondition) {
+      setFeedback("La regla requiere counterCondition")
       return
     }
 
@@ -731,8 +772,6 @@ export default function LogicPage() {
     setConstraintRuleDraft(null)
   }
 
-  const selectionCounters = logicCounters.filter((counter) => PROTECTED_COUNTER_KEYS.includes(counter.key))
-
   const sortedDeckWeights = [...deckWeights].sort((left, right) => {
     if (left.weight !== right.weight) return right.weight - left.weight
     return left.id.localeCompare(right.id)
@@ -741,52 +780,31 @@ export default function LogicPage() {
   const totalDeckWeight = deckWeights.reduce((sum, deck) => sum + deck.weight, 0)
 
   const deckTypeOptions = Array.from(new Set(deckWeights.map((deck) => deck.type).filter(Boolean))).sort()
+  const isDeckWeightTarget =
+    weightRuleForm.targetType === "deck_id" ||
+    weightRuleForm.targetType === "deck_type"
+
   const weightTargetOptions =
     weightRuleForm.targetType === "deck_id"
       ? sortedDeckWeights.map((deck) => ({ key: deck.id, label: `${deck.name} (${deck.id.slice(0, 8)})` }))
       : deckTypeOptions.map((type) => ({ key: type, label: type }))
+
+  const isDeckConstraintTarget =
+    constraintRuleForm.targetType === "deck_id" ||
+    constraintRuleForm.targetType === "deck_type"
 
   const constraintTargetOptions =
     constraintRuleForm.targetType === "deck_id"
       ? sortedDeckWeights.map((deck) => ({ key: deck.id, label: `${deck.name} (${deck.id.slice(0, 8)})` }))
       : deckTypeOptions.map((type) => ({ key: type, label: type }))
 
-  const previewRows = sortedDeckWeights.map((deck) => {
-    let effectiveWeight = deck.weight
-
-    for (const weightRule of logicWeightRules) {
-      const matchesTarget =
-        (weightRule.targetType === "deck_id" && weightRule.targetKey === deck.id) ||
-        (weightRule.targetType === "deck_type" && weightRule.targetKey === deck.type)
-      if (!matchesTarget) continue
-
-      if (weightRule.conditions && weightRule.conditions.length > 0) {
-        const matchesAll = weightRule.conditions.every((condition) => {
-          if (condition.source !== weightPreview.source) return false
-          if (condition.key !== weightPreview.key.trim()) return false
-          return compareSelectionValues(weightPreview.value, condition.operator, condition.value)
-        })
-        if (!matchesAll) continue
-      }
-
-      if (weightRule.operation === "set") effectiveWeight = weightRule.value
-      if (weightRule.operation === "add") effectiveWeight += weightRule.value
-      if (weightRule.operation === "multiply") effectiveWeight *= weightRule.value
-    }
-
-    const normalized = Number.isFinite(effectiveWeight) ? Math.max(effectiveWeight, 0) : 0
-    return { deck, effectiveWeight: normalized }
-  })
-
-  const previewTotal = previewRows.reduce((sum, row) => sum + row.effectiveWeight, 0)
-  const previewSortedRows = [...previewRows].sort((left, right) => {
-    if (left.effectiveWeight !== right.effectiveWeight) return right.effectiveWeight - left.effectiveWeight
-    return left.deck.id.localeCompare(right.deck.id)
-  })
+  const weightConditionOperatorOptions = getConditionOperatorOptions(weightRuleForm.conditionSource)
+  const constraintConditionOperatorOptions = getConditionOperatorOptions(constraintRuleForm.conditionSource)
 
   const supportsStatFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.statKey
   const supportsWorldFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.worldKey
   const supportsCounterFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.counterKey
+  const supportsDeckTypeFilter = EVENT_FILTER_SUPPORT[ruleForm.trigger]?.deckType
 
   const actionKeyOptions =
     ruleForm.actionType === "increment_counter"
@@ -825,101 +843,6 @@ export default function LogicPage() {
         </div>
       </section>
 
-      <section className="rounded bg-slate-800 p-4 space-y-3">
-        <h2 className="font-semibold">Preview de pesos efectivos</h2>
-        <p className="text-sm text-slate-400">Simula un valor de condicion generica (source/key/value).</p>
-        <div className="grid gap-3 md:grid-cols-3">
-          <select
-            value={weightPreview.source}
-            onChange={(e) => setWeightPreview((prev) => ({ ...prev, source: e.target.value as "" | SelectionConditionSource, key: "" }))}
-            className="rounded bg-slate-700 px-4 py-2 text-white"
-          >
-            <option value="">source (opcional)</option>
-            <option value="counter">counter</option>
-            <option value="stat">stat</option>
-            <option value="world">world</option>
-            <option value="flag">flag</option>
-          </select>
-          <input
-            type="text"
-            value={weightPreview.key}
-            onChange={(e) => setWeightPreview((prev) => ({ ...prev, key: e.target.value }))}
-            className="rounded bg-slate-700 px-4 py-2 text-white"
-            placeholder="condition key"
-          />
-          <input
-            type="text"
-            value={weightPreview.value}
-            onChange={(e) => setWeightPreview((prev) => ({ ...prev, value: e.target.value }))}
-            className="rounded bg-slate-700 px-4 py-2 text-white"
-            placeholder="condition value"
-          />
-        </div>
-        <div className="space-y-2">
-          {previewSortedRows.map((row, index) => {
-            const chance = previewTotal > 0 ? ((row.effectiveWeight / previewTotal) * 100).toFixed(1) : "0.0"
-            return (
-              <div
-                key={row.deck.id}
-                className={`flex items-center justify-between rounded border px-3 py-2 text-sm ${
-                  index === 0
-                    ? "border-emerald-500/60 bg-emerald-950/30 text-emerald-200"
-                    : "border-slate-600 bg-slate-900 text-slate-200"
-                }`}
-              >
-                <span>{row.deck.name} ({row.deck.type})</span>
-                <span>base: {row.deck.weight} {"->"} efectivo: {row.effectiveWeight} · {chance}%</span>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      <section className="rounded bg-slate-800 p-4 space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="font-semibold">Seleccion de cartas (base de runtime)</h2>
-            <p className="text-sm text-slate-400 mt-1">Inicializa contadores base y world states recomendados desde UI.</p>
-          </div>
-          <button
-            type="button"
-            onClick={handleBootstrapSelectionBase}
-            disabled={isSaving}
-            className="rounded bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            Inicializar base
-          </button>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-400 mb-2">Contadores base protegidos</p>
-            <ul className="space-y-1 text-sm">
-              {PROTECTED_COUNTER_KEYS.map((key) => {
-                const exists = selectionCounters.some((counter) => counter.key === key)
-                return (
-                  <li key={key} className={exists ? "text-emerald-300" : "text-amber-300"}>
-                    {exists ? "OK" : "Pendiente"} · {key}
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-400 mb-2">World states recomendados</p>
-            <ul className="space-y-1 text-sm">
-              {["world.cycle", "world.day", "world.phase", "world.context"].map((key) => {
-                const exists = worldStateKeys.includes(key)
-                return (
-                  <li key={key} className={exists ? "text-emerald-300" : "text-amber-300"}>
-                    {exists ? "OK" : "Pendiente"} · {key}
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        </div>
-      </section>
-
       <section className="rounded bg-slate-800 p-4 space-y-4">
         <div>
           <h2 className="font-semibold">Reglas de peso (genericas)</h2>
@@ -941,17 +864,28 @@ export default function LogicPage() {
           </div>
           <div>
             <label className="mb-1 block text-sm font-semibold">Target Key</label>
-            <select
-              value={weightRuleForm.targetKey}
-              onChange={(e) => setWeightRuleForm((prev) => ({ ...prev, targetKey: e.target.value }))}
-              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-              required
-            >
-              <option value="">Selecciona target</option>
-              {weightTargetOptions.map((option) => (
-                <option key={option.key} value={option.key}>{option.label}</option>
-              ))}
-            </select>
+            {isDeckWeightTarget ? (
+              <select
+                value={weightRuleForm.targetKey}
+                onChange={(e) => setWeightRuleForm((prev) => ({ ...prev, targetKey: e.target.value }))}
+                className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                required
+              >
+                <option value="">Selecciona target</option>
+                {weightTargetOptions.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={weightRuleForm.targetKey}
+                onChange={(e) => setWeightRuleForm((prev) => ({ ...prev, targetKey: e.target.value }))}
+                className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                placeholder={weightRuleForm.targetType === "card_id" ? "card id" : "card type"}
+                required
+              />
+            )}
           </div>
 
           <div>
@@ -982,7 +916,16 @@ export default function LogicPage() {
             <label className="mb-1 block text-sm font-semibold">Condicion source (opcional)</label>
             <select
               value={weightRuleForm.conditionSource}
-              onChange={(e) => setWeightRuleForm((prev) => ({ ...prev, conditionSource: e.target.value as "" | SelectionConditionSource, conditionKey: "", conditionValue: "" }))}
+              onChange={(e) => {
+                const nextSource = e.target.value as "" | SelectionConditionSource
+                setWeightRuleForm((prev) => ({
+                  ...prev,
+                  conditionSource: nextSource,
+                  conditionKey: "",
+                  conditionOperator: getDefaultConditionOperator(nextSource),
+                  conditionValue: "",
+                }))
+              }}
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
             >
               <option value="">Sin condicion</option>
@@ -990,6 +933,8 @@ export default function LogicPage() {
               <option value="stat">stat</option>
               <option value="world">world</option>
               <option value="flag">flag</option>
+              <option value="deck">deck</option>
+              <option value="card">card</option>
             </select>
           </div>
           <div>
@@ -1009,13 +954,11 @@ export default function LogicPage() {
               value={weightRuleForm.conditionOperator}
               onChange={(e) => setWeightRuleForm((prev) => ({ ...prev, conditionOperator: e.target.value as RuleOperator }))}
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-              disabled={!weightRuleForm.conditionSource}
+              disabled={!weightRuleForm.conditionSource || !weightRuleForm.conditionKey.trim()}
             >
-              <option value="eq">eq</option>
-              <option value="gt">gt</option>
-              <option value="gte">gte</option>
-              <option value="lt">lt</option>
-              <option value="lte">lte</option>
+              {weightConditionOperatorOptions.map((operator) => (
+                <option key={operator} value={operator}>{operator}</option>
+              ))}
             </select>
           </div>
           <div>
@@ -1133,9 +1076,14 @@ export default function LogicPage() {
                                   setWeightRuleDraft((prev) => {
                                     if (!prev) return prev
                                     const nextConditions = [...(prev.conditions || [])]
+                                    const nextSource = e.target.value as SelectionConditionSource
                                     nextConditions[index] = {
                                       ...nextConditions[index],
-                                      source: e.target.value as SelectionConditionSource,
+                                      source: nextSource,
+                                      operator: normalizeConditionOperator(
+                                        nextSource,
+                                        nextConditions[index].operator
+                                      ),
                                     }
                                     return { ...prev, conditions: nextConditions }
                                   })
@@ -1180,12 +1128,11 @@ export default function LogicPage() {
                                   })
                                 }
                                 className="rounded bg-slate-700 px-2 py-2 text-white"
+                                disabled={!condition.key?.trim()}
                               >
-                                <option value="eq">eq</option>
-                                <option value="gt">gt</option>
-                                <option value="gte">gte</option>
-                                <option value="lt">lt</option>
-                                <option value="lte">lte</option>
+                                {getConditionOperatorOptions(condition.source).map((operator) => (
+                                  <option key={operator} value={operator}>{operator}</option>
+                                ))}
                               </select>
                               <input
                                 type="text"
@@ -1301,7 +1248,7 @@ export default function LogicPage() {
       <section className="rounded bg-slate-800 p-4 space-y-4">
         <div>
           <h2 className="font-semibold">Reglas de restriccion (hard constraints)</h2>
-          <p className="text-sm text-slate-400 mt-1">Bloquean candidatos por selector cuando un counter cumple una condicion.</p>
+          <p className="text-sm text-slate-400 mt-1">Bloquean candidatos por selector con condiciones genericas opcionales, counters de bloqueo y limites de ocurrencia.</p>
         </div>
 
         <form onSubmit={handleAddConstraintRule} className="grid gap-3 md:grid-cols-2">
@@ -1314,75 +1261,133 @@ export default function LogicPage() {
             >
               <option value="deck_type">deck_type</option>
               <option value="deck_id">deck_id</option>
+              <option value="card_type">card_type</option>
+              <option value="card_id">card_id</option>
             </select>
           </div>
           <div>
             <label className="mb-1 block text-sm font-semibold">Target Key</label>
+            {isDeckConstraintTarget ? (
+              <select
+                value={constraintRuleForm.targetKey}
+                onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, targetKey: e.target.value }))}
+                className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                required
+              >
+                <option value="">Selecciona target</option>
+                {constraintTargetOptions.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={constraintRuleForm.targetKey}
+                onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, targetKey: e.target.value }))}
+                className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                placeholder={constraintRuleForm.targetType === "card_id" ? "card id" : "card type"}
+                required
+              />
+            )}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-semibold">Condicion Source (opcional)</label>
             <select
-              value={constraintRuleForm.targetKey}
-              onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, targetKey: e.target.value }))}
+              value={constraintRuleForm.conditionSource}
+              onChange={(e) =>
+                {
+                  const nextSource = e.target.value as "" | SelectionConditionSource
+                  setConstraintRuleForm((prev) => ({
+                    ...prev,
+                    conditionSource: nextSource,
+                    conditionKey: "",
+                    conditionValue: "",
+                    conditionOperator: getDefaultConditionOperator(nextSource),
+                  }))
+                }
+              }
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-              required
             >
-              <option value="">Selecciona target</option>
-              {constraintTargetOptions.map((option) => (
-                <option key={option.key} value={option.key}>{option.label}</option>
-              ))}
+              <option value="">Sin condicion adicional</option>
+              <option value="counter">counter</option>
+              <option value="stat">stat</option>
+              <option value="world">world</option>
+              <option value="flag">flag</option>
+              <option value="deck">deck</option>
+              <option value="card">card</option>
             </select>
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-semibold">Max Occurrences (opcional)</label>
-            <input
-              type="number"
-              min={0}
-              value={constraintRuleForm.maxOccurrences}
-              onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, maxOccurrences: Number(e.target.value) }))}
-              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-semibold">Occurrence Mode</label>
-            <select
-              value={constraintRuleForm.occurrenceMode}
-              onChange={(e) =>
-                setConstraintRuleForm((prev) => ({
-                  ...prev,
-                  occurrenceMode: e.target.value as SelectionConstraintOccurrenceMode,
-                }))
-              }
-              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-            >
-              <option value="count_matches">count_matches</option>
-              <option value="count_unique_targets">count_unique_targets</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-semibold">Scope</label>
-            <select
-              value={constraintRuleForm.scope}
-              onChange={(e) =>
-                setConstraintRuleForm((prev) => ({
-                  ...prev,
-                  scope: e.target.value as "cycle" | "global",
-                }))
-              }
-              className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-            >
-              <option value="cycle">cycle</option>
-              <option value="global">global</option>
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-semibold">Scope World Key (cycle)</label>
+            <label className="mb-1 block text-sm font-semibold">Condicion Key</label>
             <input
               type="text"
-              value={constraintRuleForm.scopeWorldKey}
-              onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, scopeWorldKey: e.target.value }))}
+              value={constraintRuleForm.conditionKey}
+              onChange={(e) => setConstraintRuleForm((prev) => ({ ...prev, conditionKey: e.target.value }))}
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
-              disabled={constraintRuleForm.scope !== "cycle"}
+              disabled={!constraintRuleForm.conditionSource}
+              placeholder={
+                constraintRuleForm.conditionSource === "deck"
+                  ? "type, repeatable, id..."
+                  : constraintRuleForm.conditionSource === "card"
+                    ? "type, priority, id..."
+                    : "key"
+              }
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              value={constraintRuleForm.conditionOperator}
+              onChange={(e) =>
+                setConstraintRuleForm((prev) => ({
+                  ...prev,
+                  conditionOperator: e.target.value as RuleOperator,
+                }))
+              }
+              className="rounded bg-slate-700 px-4 py-2 text-white"
+              disabled={!constraintRuleForm.conditionSource || !constraintRuleForm.conditionKey.trim()}
+            >
+              {constraintConditionOperatorOptions.map((operator) => (
+                <option key={operator} value={operator}>{operator}</option>
+              ))}
+            </select>
+            {constraintRuleForm.conditionSource === "flag" ? (
+              <select
+                value={String(constraintRuleForm.conditionValue || "")}
+                onChange={(e) =>
+                  setConstraintRuleForm((prev) => ({
+                    ...prev,
+                    conditionValue: e.target.value,
+                  }))
+                }
+                className="rounded bg-slate-700 px-4 py-2 text-white"
+                disabled={!constraintRuleForm.conditionSource}
+              >
+                <option value="">valor</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            ) : (
+              <input
+                type={
+                  constraintRuleForm.conditionSource === "counter" ||
+                  constraintRuleForm.conditionSource === "stat"
+                    ? "number"
+                    : "text"
+                }
+                value={String(constraintRuleForm.conditionValue || "")}
+                onChange={(e) =>
+                  setConstraintRuleForm((prev) => ({
+                    ...prev,
+                    conditionValue: e.target.value,
+                  }))
+                }
+                className="rounded bg-slate-700 px-4 py-2 text-white"
+                disabled={!constraintRuleForm.conditionSource}
+              />
+            )}
           </div>
 
           <div>
@@ -1475,6 +1480,11 @@ export default function LogicPage() {
                 >
                   <p className="text-sm font-semibold">{rule.targetType}:{rule.targetKey}</p>
                   <p className="text-xs text-slate-400">
+                    {(rule.conditions || []).length > 0
+                      ? `cond: ${(rule.conditions || []).map((c) => `${c.source}:${c.key} ${c.operator} ${String(c.value)}`).join(" && ")}`
+                      : "sin condiciones"}
+                  </p>
+                  <p className="text-xs text-slate-400">
                     {rule.counterCondition
                       ? `bloquea: ${rule.counterCondition.counterKey} ${rule.counterCondition.operator} ${rule.counterCondition.value}`
                       : "sin counterCondition"}
@@ -1516,6 +1526,137 @@ export default function LogicPage() {
                             className="rounded bg-slate-700 px-3 py-2 text-white"
                             placeholder="target key"
                           />
+
+                          <div className="space-y-2 md:col-span-2">
+                            <p className="text-xs text-slate-300">Condiciones (todas deben cumplirse)</p>
+                            {(constraintRuleDraft.conditions || []).map((condition, index) => (
+                              <div key={`${constraintRuleDraft.id}-constraint-cond-${index}`} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+                                <select
+                                  value={condition.source}
+                                  onChange={(e) =>
+                                    setConstraintRuleDraft((prev) => {
+                                      if (!prev) return prev
+                                      const nextConditions = [...(prev.conditions || [])]
+                                      const nextSource = e.target.value as SelectionConditionSource
+                                      nextConditions[index] = {
+                                        ...nextConditions[index],
+                                        source: nextSource,
+                                        operator: normalizeConditionOperator(
+                                          nextSource,
+                                          nextConditions[index].operator
+                                        ),
+                                      }
+                                      return { ...prev, conditions: nextConditions }
+                                    })
+                                  }
+                                  className="rounded bg-slate-700 px-3 py-2 text-white"
+                                >
+                                  <option value="counter">counter</option>
+                                  <option value="stat">stat</option>
+                                  <option value="world">world</option>
+                                  <option value="flag">flag</option>
+                                  <option value="deck">deck</option>
+                                  <option value="card">card</option>
+                                </select>
+                                <input
+                                  type="text"
+                                  value={condition.key}
+                                  onChange={(e) =>
+                                    setConstraintRuleDraft((prev) => {
+                                      if (!prev) return prev
+                                      const nextConditions = [...(prev.conditions || [])]
+                                      nextConditions[index] = {
+                                        ...nextConditions[index],
+                                        key: e.target.value,
+                                      }
+                                      return { ...prev, conditions: nextConditions }
+                                    })
+                                  }
+                                  className="rounded bg-slate-700 px-3 py-2 text-white"
+                                  placeholder="key"
+                                />
+                                <select
+                                  value={condition.operator}
+                                  onChange={(e) =>
+                                    setConstraintRuleDraft((prev) => {
+                                      if (!prev) return prev
+                                      const nextConditions = [...(prev.conditions || [])]
+                                      nextConditions[index] = {
+                                        ...nextConditions[index],
+                                        operator: e.target.value as RuleOperator,
+                                      }
+                                      return { ...prev, conditions: nextConditions }
+                                    })
+                                  }
+                                  className="rounded bg-slate-700 px-3 py-2 text-white"
+                                  disabled={!condition.key?.trim()}
+                                >
+                                  {getConditionOperatorOptions(condition.source).map((operator) => (
+                                    <option key={operator} value={operator}>{operator}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type={condition.source === "counter" || condition.source === "stat" ? "number" : "text"}
+                                  value={String(condition.value ?? "")}
+                                  onChange={(e) =>
+                                    setConstraintRuleDraft((prev) => {
+                                      if (!prev) return prev
+                                      const nextConditions = [...(prev.conditions || [])]
+                                      nextConditions[index] = {
+                                        ...nextConditions[index],
+                                        value: e.target.value,
+                                      }
+                                      return { ...prev, conditions: nextConditions }
+                                    })
+                                  }
+                                  className="rounded bg-slate-700 px-3 py-2 text-white"
+                                  placeholder="valor"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConstraintRuleDraft((prev) => {
+                                      if (!prev) return prev
+                                      const nextConditions = [...(prev.conditions || [])]
+                                      nextConditions.splice(index, 1)
+                                      return {
+                                        ...prev,
+                                        conditions: nextConditions.length > 0 ? nextConditions : undefined,
+                                      }
+                                    })
+                                  }
+                                  className="rounded bg-red-600 px-3 py-2 text-xs text-white hover:bg-red-700"
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            ))}
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConstraintRuleDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        conditions: [
+                                          ...(prev.conditions || []),
+                                          {
+                                            source: "counter",
+                                            key: "",
+                                            operator: "eq",
+                                            value: 0,
+                                          },
+                                        ],
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="rounded bg-slate-600 px-3 py-1 text-xs text-white hover:bg-slate-500"
+                            >
+                              + Condicion
+                            </button>
+                          </div>
 
                           <input
                             type="text"
@@ -1655,53 +1796,6 @@ export default function LogicPage() {
                             />
                           </div>
 
-                          <input
-                            type="number"
-                            value={typeof constraintRuleDraft.maxOccurrences === "number" ? constraintRuleDraft.maxOccurrences : ""}
-                            onChange={(e) =>
-                              setConstraintRuleDraft((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      maxOccurrences: e.target.value === "" ? undefined : Number(e.target.value),
-                                    }
-                                  : prev
-                              )
-                            }
-                            className="rounded bg-slate-700 px-3 py-2 text-white"
-                            placeholder="maxOccurrences (opcional)"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <select
-                              value={constraintRuleDraft.scope || "cycle"}
-                              onChange={(e) =>
-                                setConstraintRuleDraft((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        scope: e.target.value as "cycle" | "global",
-                                      }
-                                    : prev
-                                )
-                              }
-                              className="rounded bg-slate-700 px-3 py-2 text-white"
-                            >
-                              <option value="cycle">cycle</option>
-                              <option value="global">global</option>
-                            </select>
-                            <input
-                              type="text"
-                              value={constraintRuleDraft.scopeWorldKey || ""}
-                              onChange={(e) =>
-                                setConstraintRuleDraft((prev) =>
-                                  prev ? { ...prev, scopeWorldKey: e.target.value } : prev
-                                )
-                              }
-                              className="rounded bg-slate-700 px-3 py-2 text-white"
-                              placeholder="scopeWorldKey"
-                              disabled={constraintRuleDraft.scope === "global"}
-                            />
-                          </div>
                         </div>
 
                         <div className="flex gap-2">
@@ -1724,6 +1818,15 @@ export default function LogicPage() {
                     ) : (
                       <>
                         <div className="space-y-1 text-xs text-slate-300">
+                          {(rule.conditions || []).length > 0 ? (
+                            (rule.conditions || []).map((condition, index) => (
+                              <p key={`${rule.id}-constraint-view-cond-${index}`}>
+                                {index + 1}. {condition.source}:{condition.key} {condition.operator} {String(condition.value)}
+                              </p>
+                            ))
+                          ) : (
+                            <p>Sin condiciones.</p>
+                          )}
                           {rule.counterCondition ? (
                             <p>
                               bloquea: {rule.counterCondition.counterKey} {rule.counterCondition.operator} {rule.counterCondition.value}
@@ -1736,11 +1839,6 @@ export default function LogicPage() {
                               when: {rule.whenCounter.counterKey} {rule.whenCounter.operator} {rule.whenCounter.value}
                             </p>
                           )}
-                          {typeof rule.maxOccurrences === "number" && (
-                            <p>maxOccurrences: {rule.maxOccurrences}</p>
-                          )}
-                          {rule.scope && <p>scope: {rule.scope}</p>}
-                          {rule.scopeWorldKey && <p>scopeWorldKey: {rule.scopeWorldKey}</p>}
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1862,7 +1960,7 @@ export default function LogicPage() {
             </div>
           </div>
 
-          {(supportsStatFilter || supportsWorldFilter || supportsCounterFilter) && (
+          {(supportsStatFilter || supportsWorldFilter || supportsCounterFilter || supportsDeckTypeFilter) && (
             <div className="grid grid-cols-2 gap-3">
               {supportsStatFilter && (
                 <div>
@@ -1909,6 +2007,21 @@ export default function LogicPage() {
                   </select>
                 </div>
               )}
+              {supportsDeckTypeFilter && (
+                <div>
+                  <label className="mb-1 block text-sm font-semibold">Filtro Deck Type (opcional)</label>
+                  <select
+                    value={ruleForm.filterDeckType}
+                    onChange={(e) => setRuleForm((prev) => ({ ...prev, filterDeckType: e.target.value }))}
+                    className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                  >
+                    <option value="">Sin filtro</option>
+                    {deckTypeOptions.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
@@ -1924,7 +2037,8 @@ export default function LogicPage() {
                     | "set_world_state"
                     | "increment_world_state"
                     | "set_stat"
-                    | "modify_stat",
+                    | "modify_stat"
+                    | "step_world_state_option",
                 }))
               }
               className="w-full rounded bg-slate-700 px-4 py-2 text-white"
@@ -1934,8 +2048,49 @@ export default function LogicPage() {
               <option value="increment_world_state">increment_world_state</option>
               <option value="set_stat">set_stat</option>
               <option value="modify_stat">modify_stat</option>
+              <option value="step_world_state_option">step_world_state_option</option>
             </select>
           </div>
+
+          {ruleForm.actionType === "step_world_state_option" && (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-semibold">Opciones (coma separadas, opcional)</label>
+                <input
+                  type="text"
+                  value={ruleForm.actionOptions}
+                  onChange={(e) => setRuleForm((prev) => ({ ...prev, actionOptions: e.target.value }))}
+                  className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                  placeholder="Si lo dejas vacio, usa opciones del world state enum"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-semibold">Index default</label>
+                <input
+                  type="number"
+                  value={ruleForm.actionDefaultIndex}
+                  onChange={(e) =>
+                    setRuleForm((prev) => ({
+                      ...prev,
+                      actionDefaultIndex: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full rounded bg-slate-700 px-4 py-2 text-white"
+                />
+              </div>
+              <div className="md:col-span-3 flex items-center gap-2">
+                <input
+                  id="action-wrap"
+                  type="checkbox"
+                  checked={ruleForm.actionWrap}
+                  onChange={(e) => setRuleForm((prev) => ({ ...prev, actionWrap: e.target.checked }))}
+                />
+                <label htmlFor="action-wrap" className="text-sm text-slate-300">
+                  Wrap circular (si no, clamp al inicio/final)
+                </label>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1970,9 +2125,11 @@ export default function LogicPage() {
               )}
             </div>
             <div>
-              <label className="mb-1 block text-sm font-semibold">Action Value</label>
+              <label className="mb-1 block text-sm font-semibold">
+                {ruleForm.actionType === "step_world_state_option" ? "Step (+/-)" : "Action Value"}
+              </label>
               <input
-                type="text"
+                type={ruleForm.actionType === "step_world_state_option" ? "number" : "text"}
                 value={ruleForm.actionValue}
                 onChange={(e) => setRuleForm((prev) => ({ ...prev, actionValue: e.target.value }))}
                 className="w-full rounded bg-slate-700 px-4 py-2 text-white"
@@ -2035,6 +2192,15 @@ export default function LogicPage() {
                 <div className="text-sm">
                   <p className="text-xs text-slate-300">evento: {rule.trigger || "any"}</p>
                   <p className="font-semibold">{rule.when.counterKey} {rule.when.operator} {rule.when.value}</p>
+                  {(rule.filters?.statKey || rule.filters?.worldKey || rule.filters?.counterKey || rule.filters?.deckType) && (
+                    <p className="text-xs text-slate-400">
+                      filtros:
+                      {rule.filters?.statKey ? ` stat=${rule.filters.statKey}` : ""}
+                      {rule.filters?.worldKey ? ` world=${rule.filters.worldKey}` : ""}
+                      {rule.filters?.counterKey ? ` counter=${rule.filters.counterKey}` : ""}
+                      {rule.filters?.deckType ? ` deckType=${rule.filters.deckType}` : ""}
+                    </p>
+                  )}
                   <p className="text-xs text-slate-400">acciones: {rule.actions.length}</p>
                 </div>
                 <div className="flex gap-2">

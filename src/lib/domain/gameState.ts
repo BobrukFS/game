@@ -6,6 +6,7 @@ export interface ActiveSequence {
 export type WorldStateValue = number | string | boolean | string[]
 
 export type WorldStateMap = Record<string, WorldStateValue>
+export type WorldStateOptionsMap = Record<string, string[]>
 
 export type InteractionCounterMap = Record<string, number>
 
@@ -24,6 +25,7 @@ export interface GameState {
   interactions?: GameInteractionState
   turn?: number
   world: WorldStateMap
+  worldOptions?: WorldStateOptionsMap
   completedDecks: string[]
   enabledDeckIds?: string[]
   seenCardsByDeck?: Record<string, string[]>

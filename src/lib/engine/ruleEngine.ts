@@ -5,8 +5,12 @@ export interface RuntimeRuleEvent {
   type: RuleTriggerType
   cardId?: string
   optionId?: string
+  deckId?: string
+  deckType?: string
   statKey?: string
   worldKey?: string
+  worldValue?: string
+  previousWorldValue?: string
   counterKey?: string
 }
 
@@ -65,9 +69,23 @@ function ruleMatchesEvent(rule: InteractionRule, event: RuntimeRuleEvent) {
 
   if (filters.statKey && filters.statKey !== event.statKey) return false
   if (filters.worldKey && filters.worldKey !== event.worldKey) return false
+  if (
+    typeof filters.worldValue !== "undefined" &&
+    String(filters.worldValue) !== String(event.worldValue ?? "")
+  ) {
+    return false
+  }
+  if (
+    typeof filters.previousWorldValue !== "undefined" &&
+    String(filters.previousWorldValue) !== String(event.previousWorldValue ?? "")
+  ) {
+    return false
+  }
   if (filters.counterKey && filters.counterKey !== event.counterKey) return false
   if (filters.cardId && filters.cardId !== event.cardId) return false
   if (filters.optionId && filters.optionId !== event.optionId) return false
+  if (filters.deckId && filters.deckId !== event.deckId) return false
+  if (filters.deckType && filters.deckType !== event.deckType) return false
 
   return true
 }
@@ -79,6 +97,19 @@ function ruleMatchesCounterCondition(rule: InteractionRule, state: GameState) {
 
 function applyRuleAction(state: GameState, action: GameRuleAction) {
   const nextState = normalizeInteractionState(state)
+
+  const clampIndex = (index: number, size: number) => {
+    if (size <= 0) return 0
+    if (index < 0) return 0
+    if (index >= size) return size - 1
+    return index
+  }
+
+  const wrapIndex = (index: number, size: number) => {
+    if (size <= 0) return 0
+    const mod = index % size
+    return mod >= 0 ? mod : mod + size
+  }
 
   switch (action.type) {
     case "increment_counter": {
@@ -136,6 +167,41 @@ function applyRuleAction(state: GameState, action: GameRuleAction) {
           [action.key]: Number(nextState.stats[action.key] || 0) + action.amount,
         },
       }
+    case "step_world_state_option": {
+      const actionOptions = Array.isArray(action.options)
+        ? action.options.map((option) => String(option).trim()).filter(Boolean)
+        : []
+      const stateOptions = Array.isArray(nextState.worldOptions?.[action.key])
+        ? (nextState.worldOptions?.[action.key] || []).map((option) => String(option).trim()).filter(Boolean)
+        : []
+      const options = actionOptions.length > 0 ? actionOptions : stateOptions
+
+      if (options.length === 0) {
+        return nextState
+      }
+
+      const currentValue = String(nextState.world[action.key] ?? "")
+      const currentIndex = options.indexOf(currentValue)
+      const defaultIndexRaw = Number(action.defaultIndex ?? 0)
+      const defaultIndex = Number.isFinite(defaultIndexRaw)
+        ? clampIndex(defaultIndexRaw, options.length)
+        : 0
+      const baseIndex = currentIndex >= 0 ? currentIndex : defaultIndex
+
+      const stepAmountRaw = Number(action.amount ?? 1)
+      const stepAmount = Number.isFinite(stepAmountRaw) ? stepAmountRaw : 1
+      const nextIndex = action.wrap
+        ? wrapIndex(baseIndex + stepAmount, options.length)
+        : clampIndex(baseIndex + stepAmount, options.length)
+
+      return {
+        ...nextState,
+        world: {
+          ...nextState.world,
+          [action.key]: options[nextIndex],
+        },
+      }
+    }
     default:
       return nextState
   }
@@ -147,6 +213,10 @@ function applyRuleActionWithEvents(
   eventQueue: QueuedRuntimeRuleEvent[],
   sourceRuleId: string
 ) {
+  const previousWorldValue =
+    typeof action.key === "string" && action.key in state.world
+      ? state.world[action.key]
+      : undefined
   const nextState = applyRuleAction(state, action)
 
   if (action.type === "increment_counter") {
@@ -159,6 +229,27 @@ function applyRuleActionWithEvents(
       viaRuleId: sourceRuleId,
       viaActionType: action.type,
     })
+  }
+
+  if (
+    action.type === "set_world_state" ||
+    action.type === "increment_world_state" ||
+    action.type === "step_world_state_option"
+  ) {
+    const nextWorldValue = action.key in nextState.world ? nextState.world[action.key] : undefined
+    if (String(previousWorldValue ?? "") !== String(nextWorldValue ?? "")) {
+      eventQueue.push({
+        event: {
+          type: "world_changed",
+          worldKey: action.key,
+          worldValue: String(nextWorldValue ?? ""),
+          previousWorldValue: String(previousWorldValue ?? ""),
+        },
+        source: "action",
+        viaRuleId: sourceRuleId,
+        viaActionType: action.type,
+      })
+    }
   }
 
   return nextState

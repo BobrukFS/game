@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { Condition, ConditionGroup } from "@/lib/domain/conditions"
-import { isConditionGroup, getValidOperatorsForDataType, getOperatorLabel, getDataTypeLabel } from "@/lib/domain/conditions"
+import { isConditionGroup, getValidOperatorsForDataType, getOperatorLabel } from "@/lib/domain/conditions"
 import type { ConditionDataType, ConditionOperator } from "@/lib/domain/conditions"
 
 interface ConditionGroupBuilderProps {
@@ -201,6 +201,15 @@ function ConditionNode({
   const validOperators = getValidOperatorsForDataType(condition.dataType)
   const keys = condition.dataType === "stat" ? statKeys : condition.dataType === "flag" ? flagKeys : worldStateKeys
 
+  const handleDataTypeChange = (dataType: ConditionDataType) => {
+    const nextOperators = getValidOperatorsForDataType(dataType)
+    onUpdate({
+      dataType,
+      key: "",
+      operator: nextOperators[0] || "equal",
+    })
+  }
+
   return (
     <div className="bg-slate-800 p-3 rounded border-l-2 border-green-500 space-y-2">
       <div className="flex justify-between items-center">
@@ -213,24 +222,12 @@ function ConditionNode({
       <div className="grid grid-cols-3 gap-2">
         <select
           value={condition.dataType}
-          onChange={(e) => onUpdate({ dataType: e.target.value as ConditionDataType })}
+          onChange={(e) => handleDataTypeChange(e.target.value as ConditionDataType)}
           className="px-2 py-1 bg-slate-700 rounded text-white text-sm"
         >
           <option value="stat">Stat</option>
           <option value="flag">Flag</option>
           <option value="world_state">World State</option>
-        </select>
-
-        <select
-          value={condition.operator}
-          onChange={(e) => onUpdate({ operator: e.target.value as ConditionOperator })}
-          className="px-2 py-1 bg-slate-700 rounded text-white text-sm"
-        >
-          {validOperators.map((op) => (
-            <option key={op} value={op}>
-              {getOperatorLabel(op)}
-            </option>
-          ))}
         </select>
 
         <select
@@ -242,6 +239,19 @@ function ConditionNode({
           {Array.from(keys).map((key) => (
             <option key={key} value={key}>
               {key}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={condition.operator}
+          onChange={(e) => onUpdate({ operator: e.target.value as ConditionOperator })}
+          className="px-2 py-1 bg-slate-700 rounded text-white text-sm"
+          disabled={!condition.key}
+        >
+          {validOperators.map((op) => (
+            <option key={op} value={op}>
+              {getOperatorLabel(op)}
             </option>
           ))}
         </select>

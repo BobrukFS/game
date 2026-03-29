@@ -248,21 +248,6 @@ export default function DeckGeneralSettingsForm({
 
           <form onSubmit={handleAddDeckCondition} className="mb-3 grid gap-2 md:grid-cols-4">
             <select
-              value={newDeckCondition.operator}
-              onChange={(e) =>
-                setNewDeckCondition((prev) => ({
-                  ...prev,
-                  operator: e.target.value as "equal" | "not_equal",
-                }))
-              }
-              disabled={!isEditing}
-              className="rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-70"
-            >
-              <option value="equal">Flag activo (equal)</option>
-              <option value="not_equal">Flag inactivo (not_equal)</option>
-            </select>
-
-            <select
               value={newDeckCondition.key}
               onChange={(e) => setNewDeckCondition((prev) => ({ ...prev, key: e.target.value }))}
               disabled={!isEditing}
@@ -274,6 +259,21 @@ export default function DeckGeneralSettingsForm({
                   {flagKey}
                 </option>
               ))}
+            </select>
+
+            <select
+              value={newDeckCondition.operator}
+              onChange={(e) =>
+                setNewDeckCondition((prev) => ({
+                  ...prev,
+                  operator: e.target.value as "equal" | "not_equal",
+                }))
+              }
+              disabled={!isEditing || !newDeckCondition.key}
+              className="rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-70"
+            >
+              <option value="equal">Flag activo (equal)</option>
+              <option value="not_equal">Flag inactivo (not_equal)</option>
             </select>
 
             <select

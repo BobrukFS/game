@@ -15,6 +15,7 @@ export type RuleTriggerType =
   | "card_shown"
   | "option_resolved"
   | "stat_changed"
+  | "world_changed"
   | "counter_changed"
   | "sequence_started"
   | "sequence_completed"
@@ -29,9 +30,13 @@ export interface InteractionRuleCondition {
 export interface InteractionRuleFilters {
   statKey?: string
   worldKey?: string
+  worldValue?: string
+  previousWorldValue?: string
   counterKey?: string
   cardId?: string
   optionId?: string
+  deckId?: string
+  deckType?: string
 }
 
 export type GameRuleAction =
@@ -59,6 +64,14 @@ export type GameRuleAction =
       type: "modify_stat"
       key: string
       amount: number
+    }
+  | {
+      type: "step_world_state_option"
+      key: string
+      options?: string[]
+      defaultIndex?: number
+      amount?: number
+      wrap?: boolean
     }
 
 export interface InteractionRule {
@@ -111,12 +124,14 @@ export interface SelectionWeightRule {
 
 export type SelectionConstraintScope = "cycle" | "global"
 
-export type SelectionConstraintOccurrenceMode = "count_matches" | "count_unique_targets"
-
 export interface SelectionConstraintRule {
   id: string
   targetType: SelectionWeightTargetType
   targetKey: string
+
+  // Generic conditions (preferred). All conditions must pass.
+  conditions?: SelectionCondition[]
+
   // Generic hard-constraint: if this condition is true, matching candidates are blocked.
   counterCondition?: InteractionRuleCondition
 
@@ -124,10 +139,8 @@ export interface SelectionConstraintRule {
   whenCounter?: InteractionRuleCondition
 
   // Legacy fields kept optional for backward compatibility with existing configs.
-  maxOccurrences?: number
   scope?: SelectionConstraintScope
   scopeWorldKey?: string
-  occurrenceMode?: SelectionConstraintOccurrenceMode
   filters?: SelectionWeightRuleFilters
 }
 

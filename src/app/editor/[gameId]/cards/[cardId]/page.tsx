@@ -323,6 +323,8 @@ export default function CardPage() {
   const [statKeys, setStatKeys] = useState<string[]>([])
   const [worldStateKeys, setWorldStateKeys] = useState<string[]>([])
   const [worldStateTypeMap, setWorldStateTypeMap] = useState<Record<string, string>>({})
+  const [worldStateEnumOptionsMap, setWorldStateEnumOptionsMap] = useState<Record<string, string[]>>({})
+  const [worldStateEnumCurrentMap, setWorldStateEnumCurrentMap] = useState<Record<string, string>>({})
   const [flagKeys, setFlagKeys] = useState<string[]>([])
   const [availableNextCards, setAvailableNextCards] = useState<NextCardPreview[]>([])
 
@@ -345,6 +347,27 @@ export default function CardPage() {
 
     return []
   }, [flagKeys, newCondition.dataType, statKeys, worldStateKeys])
+
+  const selectedWorldStateType =
+    newCondition.dataType === "world_state" && newCondition.key
+      ? worldStateTypeMap[newCondition.key] || "string"
+      : ""
+
+  const selectedWorldEnumOptions =
+    newCondition.dataType === "world_state" && selectedWorldStateType === "enum"
+      ? worldStateEnumOptionsMap[newCondition.key] || []
+      : []
+
+  const conditionOperatorOptions = useMemo(() => {
+    if (!newCondition.dataType) return []
+
+    const base = getValidOperatorsForDataType(newCondition.dataType)
+    if (newCondition.dataType === "world_state" && selectedWorldStateType === "enum") {
+      return base.filter((operator) => operator === "equal" || operator === "not_equal")
+    }
+
+    return base
+  }, [newCondition.dataType, selectedWorldStateType])
 
   const effectKeyOptions = useMemo(() => {
     if (!newEffect) return []
@@ -388,6 +411,31 @@ export default function CardPage() {
         worldStates.map((ws: { key: string; valueType?: string }) => [ws.key, ws.valueType || "string"])
       )
     )
+    const enumOptionsMap: Record<string, string[]> = {}
+    const enumCurrentMap: Record<string, string> = {}
+
+    worldStates.forEach((ws: { key: string; valueType?: string; value?: string }) => {
+      if (ws.valueType !== "enum") return
+
+      try {
+        const parsed = JSON.parse(String(ws.value || "")) as { current?: unknown; options?: unknown }
+        const options = Array.isArray(parsed?.options)
+          ? parsed.options.map((option) => String(option).trim()).filter(Boolean)
+          : []
+
+        if (options.length === 0) return
+
+        const requestedCurrent = String(parsed?.current ?? "").trim()
+        const current = options.includes(requestedCurrent) ? requestedCurrent : options[0]
+        enumOptionsMap[ws.key] = options
+        enumCurrentMap[ws.key] = current
+      } catch {
+        // Ignore malformed enum world state payloads in editor helpers.
+      }
+    })
+
+    setWorldStateEnumOptionsMap(enumOptionsMap)
+    setWorldStateEnumCurrentMap(enumCurrentMap)
     setFlagKeys(flags)
     setAvailableNextCards(
       deckCards
@@ -535,6 +583,17 @@ export default function CardPage() {
       return
     }
 
+    if (dataType === "world_state" && worldStateTypeMap[key] === "enum") {
+      if (operator !== "equal" && operator !== "not_equal") {
+        return
+      }
+
+      const allowed = worldStateEnumOptionsMap[key] || []
+      if (allowed.length > 0 && !allowed.includes(value)) {
+        return
+      }
+    }
+
     const nextCondition: DraftCondition = {
       dataType,
       operator,
@@ -549,7 +608,7 @@ export default function CardPage() {
 
     setDraftConditions((prev) => [...prev, nextCondition])
     setNewCondition({ dataType: "", operator: "", key: "", value: "", logicOperator: "AND" })
-  }, [editingCard, newCondition, draftConditions])
+  }, [editingCard, newCondition, draftConditions, worldStateTypeMap, worldStateEnumOptionsMap])
 
   const addOptionDraft = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -957,37 +1016,39 @@ export default function CardPage() {
               <option value="world_state">{getDataTypeLabel("world_state")}</option>
             </select>
 
-            <label htmlFor="new-condition-operator" className="mb-1 block text-xs font-semibold text-slate-300">
-              Operador
-            </label>
-            <select
-              id="new-condition-operator"
-              value={newCondition.operator}
-              onChange={(e) =>
-                setNewCondition((prev) => ({
-                  ...prev,
-                  operator: e.target.value as ConditionOperator | "",
-                }))
-              }
-              disabled={!editingCard || !newCondition.dataType}
-              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
-            >
-              <option value="">{newCondition.dataType ? "Selecciona operador" : "Selecciona tipo de dato primero"}</option>
-              {newCondition.dataType &&
-                getValidOperatorsForDataType(newCondition.dataType).map((op) => (
-                  <option key={op} value={op}>
-                    {getOperatorLabel(op as ConditionOperator)}
-                  </option>
-                ))}
-            </select>
-
             <label htmlFor="new-condition-key" className="mb-1 block text-xs font-semibold text-slate-300">
               Clave/Variable
             </label>
             <select
               id="new-condition-key"
               value={newCondition.key}
-              onChange={(e) => setNewCondition((prev) => ({ ...prev, key: e.target.value }))}
+              onChange={(e) => {
+                const nextKey = e.target.value
+                const nextType = newCondition.dataType === "world_state"
+                  ? worldStateTypeMap[nextKey] || "string"
+                  : ""
+                const nextOperatorOptions = newCondition.dataType
+                  ? (newCondition.dataType === "world_state" && nextType === "enum"
+                      ? getValidOperatorsForDataType("world_state").filter((operator) => operator === "equal" || operator === "not_equal")
+                      : getValidOperatorsForDataType(newCondition.dataType))
+                  : []
+                const nextOperator = nextOperatorOptions.includes(newCondition.operator as ConditionOperator)
+                  ? newCondition.operator
+                  : (nextOperatorOptions[0] || "")
+                const enumCurrent = worldStateEnumCurrentMap[nextKey] || ""
+                const enumOptions = worldStateEnumOptionsMap[nextKey] || []
+                const nextValue =
+                  newCondition.dataType === "world_state" && nextType === "enum"
+                    ? (enumOptions.includes(newCondition.value) ? newCondition.value : enumCurrent)
+                    : newCondition.value
+
+                setNewCondition((prev) => ({
+                  ...prev,
+                  key: nextKey,
+                  operator: nextOperator,
+                  value: nextValue,
+                }))
+              }}
               disabled={!editingCard || !newCondition.dataType || conditionKeyOptions.length === 0}
               className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
             >
@@ -1005,20 +1066,64 @@ export default function CardPage() {
               ))}
             </select>
 
+            <label htmlFor="new-condition-operator" className="mb-1 block text-xs font-semibold text-slate-300">
+              Operador
+            </label>
+            <select
+              id="new-condition-operator"
+              value={newCondition.operator}
+              onChange={(e) =>
+                setNewCondition((prev) => ({
+                  ...prev,
+                  operator: e.target.value as ConditionOperator | "",
+                }))
+              }
+              disabled={!editingCard || !newCondition.dataType || !newCondition.key}
+              className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+            >
+              <option value="">
+                {!newCondition.dataType
+                  ? "Selecciona tipo de dato primero"
+                  : !newCondition.key
+                    ? "Selecciona variable primero"
+                    : "Selecciona operador"}
+              </option>
+              {conditionOperatorOptions.map((op) => (
+                  <option key={op} value={op}>
+                    {getOperatorLabel(op as ConditionOperator)}
+                  </option>
+                ))}
+            </select>
+
             {newCondition.dataType !== "flag" && (
               <>
                 <label htmlFor="new-condition-value" className="mb-1 block text-xs font-semibold text-slate-300">
                   Valor {newCondition.dataType === "stat" ? "(numérico)" : ""}
                 </label>
-                <input
-                  id="new-condition-value"
-                  type={newCondition.dataType === "stat" ? "number" : "text"}
-                  placeholder={newCondition.dataType === "stat" ? "0" : "valor"}
-                  value={newCondition.value}
-                  onChange={(e) => setNewCondition((prev) => ({ ...prev, value: e.target.value }))}
-                  disabled={!editingCard || !newCondition.dataType}
-                  className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
-                />
+                {newCondition.dataType === "world_state" && selectedWorldStateType === "enum" ? (
+                  <select
+                    id="new-condition-value"
+                    value={newCondition.value}
+                    onChange={(e) => setNewCondition((prev) => ({ ...prev, value: e.target.value }))}
+                    disabled={!editingCard || !newCondition.key || selectedWorldEnumOptions.length === 0}
+                    className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+                  >
+                    <option value="">Selecciona valor</option>
+                    {selectedWorldEnumOptions.map((value) => (
+                      <option key={value} value={value}>{value}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id="new-condition-value"
+                    type={newCondition.dataType === "stat" ? "number" : "text"}
+                    placeholder={newCondition.dataType === "stat" ? "0" : "valor"}
+                    value={newCondition.value}
+                    onChange={(e) => setNewCondition((prev) => ({ ...prev, value: e.target.value }))}
+                    disabled={!editingCard || !newCondition.dataType}
+                    className="mb-2 w-full rounded bg-slate-700 px-3 py-2 text-white disabled:opacity-60"
+                  />
+                )}
               </>
             )}
 

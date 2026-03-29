@@ -10,6 +10,29 @@
 import { GameState } from "@/lib/domain"
 import { PlayRuntimeBundle } from "@/lib/services/prisma/playRuntime"
 
+type ParsedWorldEnum = {
+  current: string
+  options: string[]
+}
+
+function parseWorldEnum(value: string): ParsedWorldEnum | null {
+  try {
+    const parsed = JSON.parse(value) as { current?: unknown; options?: unknown }
+    const options = Array.isArray(parsed?.options)
+      ? parsed.options.map((item) => String(item).trim()).filter(Boolean)
+      : []
+
+    if (options.length === 0) return null
+
+    const requestedCurrent = String(parsed?.current ?? "").trim()
+    const current = options.includes(requestedCurrent) ? requestedCurrent : options[0]
+
+    return { current, options }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Parse world state value based on type (number, boolean, string)
  */
@@ -35,6 +58,11 @@ function parseWorldStateValue(valueType: string, value: string): string | number
     return []
   }
 
+  if (valueType === "enum") {
+    const parsedEnum = parseWorldEnum(value)
+    return parsedEnum?.current || ""
+  }
+
   return value
 }
 
@@ -47,6 +75,15 @@ export function buildInitialGameState(bundle: PlayRuntimeBundle): GameState {
   const world = Object.fromEntries(
     bundle.worldStates.map((ws) => [ws.key, parseWorldStateValue(ws.valueType, ws.value)])
   )
+  const worldOptions = Object.fromEntries(
+    bundle.worldStates
+      .filter((ws) => ws.valueType === "enum")
+      .map((ws) => {
+        const parsedEnum = parseWorldEnum(ws.value)
+        return [ws.key, parsedEnum?.options || []]
+      })
+      .filter((entry) => entry[1].length > 0)
+  ) as Record<string, string[]>
 
   const counters: Record<string, number> = {}
   ;(bundle.logic.counters || []).forEach((counter: any) => {
@@ -62,6 +99,7 @@ export function buildInitialGameState(bundle: PlayRuntimeBundle): GameState {
     inventory: [],
     flags: {},
     world,
+    worldOptions,
     completedDecks: [],
     enabledDeckIds: bundle.decks.map((deck) => deck.id),
     seenCardsByDeck: {},
@@ -100,6 +138,7 @@ export function loadGameSession(sessionData: string): GameState | null {
       ...loaded,
       enabledDeckIds: Array.isArray(loaded.enabledDeckIds) ? loaded.enabledDeckIds : [],
       seenCardsByDeck: loaded.seenCardsByDeck || {},
+      worldOptions: loaded.worldOptions || {},
     }
   } catch {
     return null

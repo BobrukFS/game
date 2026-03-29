@@ -73,6 +73,12 @@ export function pauseActiveSequence(
 ): { state: GameState; events: RuntimeRuleTraceEntry[] } {
   const logicConfig = buildLogicConfig(bundle)
   const events: RuntimeRuleTraceEntry[] = []
+  const pausedCard = metadata?.cardId
+    ? bundle.cards.find((entry) => entry.id === metadata.cardId)
+    : undefined
+  const pausedDeck = pausedCard
+    ? bundle.decks.find((entry) => entry.id === pausedCard.deckId)
+    : undefined
 
   const nextState = applyGameLogicEvent(
     {
@@ -84,6 +90,8 @@ export function pauseActiveSequence(
       type: "sequence_paused",
       cardId: metadata?.cardId,
       optionId: metadata?.optionId,
+      deckId: pausedDeck?.id,
+      deckType: pausedDeck?.type,
     },
     events
   )
@@ -100,12 +108,15 @@ export function advanceCardWithoutOption(
   if (!card) {
     return { state, events: [] }
   }
+  const deck = bundle.decks.find((entry) => entry.id === card.deckId)
 
   const logicConfig = buildLogicConfig(bundle)
   const events: RuntimeRuleTraceEntry[] = []
 
   const isActiveSequenceCard = state.activeSequence?.currentCardId === cardId
-  if (!isActiveSequenceCard) {
+  const isStandaloneCard = !state.activeSequence
+
+  if (!isActiveSequenceCard && !isStandaloneCard) {
     return { state, events }
   }
 
@@ -119,6 +130,8 @@ export function advanceCardWithoutOption(
     {
       type: "sequence_completed",
       cardId,
+      deckId: deck?.id,
+      deckType: deck?.type,
     },
     events
   )
@@ -191,20 +204,24 @@ export function applySelectedOption(
   }
 
   // 3. Apply rules
+  const cardDeck = bundle.decks.find((entry) => entry.id === card.deckId)
   let nextState = applyGameLogicEvent(withHistory, logicConfig, {
     type: "option_resolved",
     cardId,
     optionId,
+    deckId: cardDeck?.id,
+    deckType: cardDeck?.type,
   }, events)
 
   nextState = applyGameLogicEvents(nextState, logicConfig, statEvents, events)
 
   // 4. Handle sequences
   if (option.nextCardId) {
+    const preserveStarted = state.activeSequence?.started === true
     return {
       state: {
         ...nextState,
-        activeSequence: { currentCardId: option.nextCardId, started: false },
+        activeSequence: { currentCardId: option.nextCardId, started: preserveStarted },
       },
       events,
     }
@@ -223,6 +240,8 @@ export function applySelectedOption(
       type: "sequence_completed",
       cardId,
       optionId,
+      deckId: cardDeck?.id,
+      deckType: cardDeck?.type,
     },
     events
   )

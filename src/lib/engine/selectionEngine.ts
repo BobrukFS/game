@@ -290,6 +290,10 @@ function isConstraintRuleMatchingCandidate(
     return false
   }
 
+  if (rule.conditions && rule.conditions.length > 0) {
+    return areSelectionConditionsMatching(rule.conditions, state, context)
+  }
+
   if (rule.whenCounter) {
     const currentCounter = Number(state.interactions?.counters?.[rule.whenCounter.counterKey] || 0)
     if (!compareCounterCondition(currentCounter, rule.whenCounter.operator, rule.whenCounter.value)) {
@@ -298,52 +302,6 @@ function isConstraintRuleMatchingCandidate(
   }
 
   return areRuleFiltersMatching(rule.filters, state)
-}
-
-/**
- * Get scope key for a constraint rule
- */
-function getConstraintScopeKey(rule: SelectionConstraintRule, state: GameState) {
-  if (rule.scope === "global") {
-    return "global"
-  }
-
-  const scopeKey = rule.scopeWorldKey || "default"
-  if (scopeKey === "default") {
-    return "cycle:default"
-  }
-
-  const rawValue = resolveWorldValue(state, scopeKey)
-  const normalizedValue =
-    typeof rawValue === "undefined" ? "undefined" : String(rawValue)
-
-  return `cycle:${scopeKey}:${normalizedValue}`
-}
-
-/**
- * Get counter key for a constraint rule
- */
-function getConstraintCounterKey(rule: SelectionConstraintRule, state: GameState) {
-  return `runtime.selection.${rule.id}.${getConstraintScopeKey(rule, state)}`
-}
-
-function getConstraintTargetToken(
-  rule: SelectionConstraintRule,
-  context: SelectionCandidateContext
-) {
-  if (rule.targetType === "deck_id") return context.deck?.id
-  if (rule.targetType === "deck_type") return context.deck?.type
-  if (rule.targetType === "card_id") return context.card?.id
-  if (rule.targetType === "card_type") return context.card?.type
-  return undefined
-}
-
-function getConstraintUniqueTargetKey(
-  rule: SelectionConstraintRule,
-  state: GameState,
-  targetToken: string
-) {
-  return `runtime.selection.unique.${rule.id}.${getConstraintScopeKey(rule, state)}.${targetToken}`
 }
 
 /**
@@ -383,87 +341,9 @@ function isCardAllowedByConstraints(
     if (isConstraintRuleBlockingByCounter(rule, state)) {
       return false
     }
-
-    if (!Number.isFinite(rule.maxOccurrences)) {
-      continue
-    }
-
-    const counterKey = getConstraintCounterKey(rule, state)
-    const currentCount = Number(state.interactions?.counters?.[counterKey] || 0)
-    const isUniqueMode = (rule.occurrenceMode || "count_matches") === "count_unique_targets"
-
-    if (!isUniqueMode && currentCount >= Number(rule.maxOccurrences)) {
-      return false
-    }
-
-    if (isUniqueMode) {
-      const targetToken = getConstraintTargetToken(rule, context)
-      if (!targetToken) continue
-
-      const uniqueKey = getConstraintUniqueTargetKey(rule, state, targetToken)
-      const targetAlreadyCounted = Number(state.interactions?.counters?.[uniqueKey] || 0) > 0
-
-      if (currentCount >= Number(rule.maxOccurrences) && !targetAlreadyCounted) {
-        return false
-      }
-    }
-
   }
 
   return true
-}
-
-/**
- * Increment constraint counters after selecting a deck
- */
-export function incrementSelectionConstraintCounters(
-  state: GameState,
-  selectedDeck: PlayRuntimeDeck,
-  selectedCard: PlayRuntimeCard,
-  logicConfig: GameLogicConfig
-) {
-  const counters = { ...(state.interactions?.counters || {}) }
-  const context: SelectionCandidateContext = { deck: selectedDeck, card: selectedCard }
-
-  for (const rule of logicConfig.constraintRules || []) {
-    if (!Number.isFinite(rule.maxOccurrences)) {
-      continue
-    }
-
-    if (!isConstraintRuleMatchingCandidate(rule, state, context)) {
-      continue
-    }
-
-    const key = getConstraintCounterKey(rule, state)
-    const isUniqueMode = (rule.occurrenceMode || "count_matches") === "count_unique_targets"
-
-    if (!isUniqueMode) {
-      counters[key] = Number(counters[key] || 0) + 1
-      continue
-    }
-
-    const targetToken = getConstraintTargetToken(rule, context)
-    if (!targetToken) {
-      continue
-    }
-
-    const uniqueKey = getConstraintUniqueTargetKey(rule, state, targetToken)
-    const targetAlreadyCounted = Number(counters[uniqueKey] || 0) > 0
-
-    if (!targetAlreadyCounted) {
-      counters[key] = Number(counters[key] || 0) + 1
-      counters[uniqueKey] = 1
-    }
-  }
-
-  return {
-    ...state,
-    interactions: {
-      ...state.interactions,
-      total: Number(counters["interactions.total"] || state.interactions?.total || 0),
-      counters,
-    },
-  }
 }
 
 /**
@@ -661,7 +541,8 @@ function isCardUnlockedByDeckProgress(
  */
 function filterNoRepeatCardsPerDeck(
   cards: PlayRuntimeCard[],
-  seenByDeck: Map<string, Set<string>>
+  seenByDeck: Map<string, Set<string>>,
+  decksById: Map<string, PlayRuntimeDeck>
 ) {
   const cardsByDeck = new Map<string, PlayRuntimeCard[]>()
   for (const card of cards) {
@@ -674,6 +555,13 @@ function filterNoRepeatCardsPerDeck(
   const selected: PlayRuntimeCard[] = []
 
   for (const [deckId, deckCards] of cardsByDeck.entries()) {
+    const deck = decksById.get(deckId)
+    if (deck?.repeatable) {
+      // Repeatable decks can re-enter already seen cards.
+      selected.push(...deckCards)
+      continue
+    }
+
     const seenSet = seenByDeck.get(deckId) || new Set<string>()
     const unseen = deckCards.filter((card) => !seenSet.has(card.id))
     selected.push(...unseen)
@@ -837,6 +725,7 @@ export function drawNextCard(
   const seenByDeck = getSeenCardsByDeckMap(bundle, state)
   const incomingByCard = buildDeckIncomingLinks(bundle)
   const stateWithTracking = withSelectionTracking(state, enabledDeckIds)
+  let stateForSelection: GameState = stateWithTracking
 
   const debugEntries = bundle.cards.map((card) => {
     const evaluations = evaluateCardConditions(card, state)
@@ -853,101 +742,85 @@ export function drawNextCard(
   if (state.activeSequence?.currentCardId) {
     const sequenceCard = bundle.cards.find((card) => card.id === state.activeSequence?.currentCardId)
     if (!sequenceCard) {
-      const nextState = {
-        ...stateWithTracking,
+      stateForSelection = {
+        ...stateForSelection,
         activeSequence: undefined,
       }
-      return {
-        state: nextState,
-        card: null,
-        debug: debugEntries,
-        message: "Sequence pointed to non-existent card.",
-        ruleEvents,
-      }
-    }
+    } else {
+      const sequenceDeck = decksById.get(sequenceCard.deckId)
+      const cardConditionsMet = areCardConditionsMet(sequenceCard, state)
+      const deckEnabled = !!sequenceDeck && enabledDeckIds.includes(sequenceDeck.id)
+      const valid = cardConditionsMet && deckEnabled
 
-    const sequenceDeck = decksById.get(sequenceCard.deckId)
-    const cardConditionsMet = areCardConditionsMet(sequenceCard, state)
-    const deckEnabled = !!sequenceDeck && enabledDeckIds.includes(sequenceDeck.id)
-    const valid = cardConditionsMet && deckEnabled
+      const lastHistoryEntry = state.history[state.history.length - 1]
+      const previousCard = lastHistoryEntry
+        ? bundle.cards.find((card) => card.id === lastHistoryEntry.cardId)
+        : undefined
+      const isSameDeckAsPrevious = !!previousCard && previousCard.deckId === sequenceCard.deckId
+      const shouldPause = isSameDeckAsPrevious && !cardConditionsMet
 
-    const lastHistoryEntry = state.history[state.history.length - 1]
-    const previousCard = lastHistoryEntry
-      ? bundle.cards.find((card) => card.id === lastHistoryEntry.cardId)
-      : undefined
-    const isSameDeckAsPrevious = !!previousCard && previousCard.deckId === sequenceCard.deckId
-    const shouldPause = isSameDeckAsPrevious && !cardConditionsMet
-
-    if (!valid) {
-      const nextState = shouldPause
-        ? applyGameLogicEvent(
-            {
-              ...stateWithTracking,
+      if (!valid) {
+        stateForSelection = shouldPause
+          ? applyGameLogicEvent(
+              {
+                ...stateForSelection,
+                activeSequence: undefined,
+              },
+              logicConfig,
+              {
+                type: "sequence_paused",
+                cardId: sequenceCard.id,
+                deckId: sequenceDeck?.id,
+                deckType: sequenceDeck?.type,
+              },
+              ruleEvents
+            )
+          : {
+              ...stateForSelection,
               activeSequence: undefined,
-            },
-            logicConfig,
-            {
-              type: "sequence_paused",
-              cardId: sequenceCard.id,
-            },
-            ruleEvents
-          )
-        : {
-            ...stateWithTracking,
-            activeSequence: undefined,
-          }
-      return {
-        state: nextState,
-        card: null,
-        debug: debugEntries,
-        message: shouldPause
-          ? "Sequence paused - card conditions not met."
-          : "Sequence ended - next card not available.",
-        ruleEvents,
+            }
+      } else {
+        const shownTrackedState = withSelectionTracking(stateWithTracking, enabledDeckIds, sequenceCard)
+        const stateWithStartedEvent = state.activeSequence?.started
+          ? shownTrackedState
+          : applyGameLogicEvent(
+              {
+                ...shownTrackedState,
+                activeSequence: {
+                  currentCardId: sequenceCard.id,
+                  started: true,
+                },
+              },
+              logicConfig,
+              {
+                type: "sequence_started",
+                cardId: sequenceCard.id,
+                deckId: sequenceDeck?.id,
+                deckType: sequenceDeck?.type,
+              },
+              ruleEvents
+            )
+
+        const nextState = applyGameLogicEvent(stateWithStartedEvent, logicConfig, {
+          type: "card_shown",
+          cardId: sequenceCard.id,
+          deckId: sequenceDeck?.id,
+          deckType: sequenceDeck?.type,
+        }, ruleEvents)
+
+        return {
+          state: nextState,
+          card: sequenceCard,
+          debug: debugEntries,
+          ruleEvents,
+        }
       }
-    }
-
-    const shownTrackedState = withSelectionTracking(stateWithTracking, enabledDeckIds, sequenceCard)
-    const stateWithStartedEvent = state.activeSequence?.started
-      ? shownTrackedState
-      : applyGameLogicEvent(
-          {
-            ...shownTrackedState,
-            activeSequence: {
-              currentCardId: sequenceCard.id,
-              started: true,
-            },
-          },
-          logicConfig,
-          {
-            type: "sequence_started",
-            cardId: sequenceCard.id,
-          },
-          ruleEvents
-        )
-
-    const nextState = applyGameLogicEvent(stateWithStartedEvent, logicConfig, {
-      type: "card_shown",
-      cardId: sequenceCard.id,
-    }, ruleEvents)
-
-    const constrainedState = sequenceDeck
-      ? incrementSelectionConstraintCounters(nextState, sequenceDeck, sequenceCard, logicConfig)
-      : nextState
-
-    return {
-      state: constrainedState,
-      card: sequenceCard,
-      debug: debugEntries,
-      ruleEvents,
     }
   }
 
   // Filter valid cards
-  const validCards = debugEntries
-    .filter((entry) => entry.valid)
-    .map((entry) => bundle.cards.find((card) => card.id === entry.cardId))
-    .filter((card): card is PlayRuntimeCard => !!card)
+  const validCards = bundle.cards
+    .filter((card) => areCardConditionsMet(card, stateForSelection))
     .filter((card) => isCardUnlockedByDeckProgress(card, incomingByCard, seenByDeck))
 
   // Filter cards from completed non-repeatable decks
@@ -966,7 +839,7 @@ export function drawNextCard(
     return true
   })
 
-  cardsFromRepeatableDecks = filterNoRepeatCardsPerDeck(cardsFromRepeatableDecks, seenByDeck)
+  cardsFromRepeatableDecks = filterNoRepeatCardsPerDeck(cardsFromRepeatableDecks, seenByDeck, decksById)
 
   if (excludeCardId) {
     const filtered = cardsFromRepeatableDecks.filter((card) => card.id !== excludeCardId)
@@ -977,7 +850,7 @@ export function drawNextCard(
 
   if (cardsFromRepeatableDecks.length === 0) {
     return {
-      state: stateWithTracking,
+      state: stateForSelection,
       card: null,
       debug: debugEntries,
       message: "No cards available from non-completed decks.",
@@ -987,12 +860,12 @@ export function drawNextCard(
 
   const frontierCards = getFrontierCardsByDeck(cardsFromRepeatableDecks)
   const constrainedCards = frontierCards.filter((card) =>
-    isCardAllowedByConstraints(card, bundle, state, logicConfig)
+    isCardAllowedByConstraints(card, bundle, stateForSelection, logicConfig)
   )
 
   if (constrainedCards.length === 0) {
     return {
-      state: stateWithTracking,
+      state: stateForSelection,
       card: null,
       debug: debugEntries,
       message: "No cards available - constraints not met.",
@@ -1001,12 +874,12 @@ export function drawNextCard(
   }
 
   const selected =
-    selectCardFromFrontierByPriorityAndWeight(constrainedCards, decksById, state, logicConfig) ||
-    pickCardFromValidPool(constrainedCards, decksById, state, logicConfig)
+    selectCardFromFrontierByPriorityAndWeight(constrainedCards, decksById, stateForSelection, logicConfig) ||
+    pickCardFromValidPool(constrainedCards, decksById, stateForSelection, logicConfig)
 
   if (!selected) {
     return {
-      state: stateWithTracking,
+      state: stateForSelection,
       card: null,
       debug: debugEntries,
       message: "No cards available after tie-break selection.",
@@ -1014,19 +887,17 @@ export function drawNextCard(
     }
   }
 
-  const shownTrackedState = withSelectionTracking(stateWithTracking, enabledDeckIds, selected)
+  const shownTrackedState = withSelectionTracking(stateForSelection, enabledDeckIds, selected)
+  const selectedDeck = decksById.get(selected.deckId)
   const nextState = applyGameLogicEvent(shownTrackedState, logicConfig, {
     type: "card_shown",
     cardId: selected.id,
+    deckId: selectedDeck?.id,
+    deckType: selectedDeck?.type,
   }, ruleEvents)
 
-  const selectedDeck = decksById.get(selected.deckId)
-  const constrainedState = selectedDeck
-    ? incrementSelectionConstraintCounters(nextState, selectedDeck, selected, logicConfig)
-    : nextState
-
   return {
-    state: constrainedState,
+    state: nextState,
     card: selected,
     debug: debugEntries,
     ruleEvents,
