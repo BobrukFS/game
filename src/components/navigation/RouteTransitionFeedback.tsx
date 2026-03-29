@@ -1,11 +1,10 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { usePathname, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 
 export default function RouteTransitionFeedback() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
   const [isNavigating, setIsNavigating] = useState(false)
   const settleTimeoutRef = useRef<number | null>(null)
   const failSafeTimeoutRef = useRef<number | null>(null)
@@ -69,7 +68,7 @@ export default function RouteTransitionFeedback() {
       setIsNavigating(false)
       settleTimeoutRef.current = null
     }, 220)
-  }, [pathname, searchParams, isNavigating])
+  }, [pathname, isNavigating])
 
   useEffect(() => {
     document.body.classList.toggle("route-pending", isNavigating)
