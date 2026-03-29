@@ -20,7 +20,13 @@ export default async function GamePage({
   params: Promise<{ gameId: string }>
 }) {
   const { gameId } = await params
-  const decks = (await fetchDecksByGameId(gameId)) as DeckListItem[]
+  let decks: DeckListItem[] = []
+
+  try {
+    decks = (await fetchDecksByGameId(gameId)) as DeckListItem[]
+  } catch (error) {
+    console.error("Error loading decks in game page:", error)
+  }
 
   return <GameDecksPageClient gameId={gameId} initialDecks={decks} />
 }

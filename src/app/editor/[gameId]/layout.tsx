@@ -10,7 +10,13 @@ export default async function GameLayout({
   params: Promise<{ gameId: string }>
 }) {
   const { gameId } = await params
-  const game = await fetchGameById(gameId)
+  let game = null
+
+  try {
+    game = await fetchGameById(gameId)
+  } catch (error) {
+    console.error("Error loading game in game layout:", error)
+  }
 
   if (!game) {
     return <div className="p-8">Juego no encontrado</div>

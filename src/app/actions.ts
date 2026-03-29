@@ -91,6 +91,20 @@ function requireText(value: string | undefined, fieldName: string) {
   return normalized
 }
 
+function normalizeDateToIso(value: unknown): string | undefined {
+  if (!value) return undefined
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (typeof value === "string") {
+    return value
+  }
+
+  return undefined
+}
+
 function normalizeOptionalText(value?: string) {
   return (value || "").trim()
 }
@@ -354,8 +368,8 @@ export async function fetchGames(): Promise<Game[]> {
   const games = await getCachedGames()
   return games.map(game => ({
     ...game,
-    createdAt: game.createdAt?.toISOString(),
-    updatedAt: game.updatedAt?.toISOString(),
+    createdAt: normalizeDateToIso(game.createdAt),
+    updatedAt: normalizeDateToIso(game.updatedAt),
   })) as Game[]
 }
 
@@ -364,8 +378,8 @@ export async function fetchGameById(id: string): Promise<Game | null> {
   if (!game) return null
   return {
     ...game,
-    createdAt: game.createdAt?.toISOString(),
-    updatedAt: game.updatedAt?.toISOString(),
+    createdAt: normalizeDateToIso(game.createdAt),
+    updatedAt: normalizeDateToIso(game.updatedAt),
   } as Game
 }
 
